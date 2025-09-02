@@ -4,9 +4,8 @@ import { getDrive } from './_drive';
 function guessAudioMimeByName(name: string, driveMime?: string): string {
   const n = name.toLowerCase();
   if (n.endsWith('.mp3')) return 'audio/mpeg';
-  if (n.endsWith('.wav')) return 'audio/wav';
-  if (driveMime && driveMime.startsWith('audio/')) return driveMime;
-  return driveMime ?? 'application/octet-stream';
+  if (driveMime === 'audio/mpeg') return driveMime;
+  return 'audio/mpeg';
 }
 
 function errMsg(e: unknown): string {
@@ -25,7 +24,7 @@ export const handler: Handler = async () => {
     const q = [
       `'${folderId}' in parents`,
       'trashed=false',
-      "(mimeType='audio/mpeg' or mimeType='audio/wav' or mimeType='audio/x-wav')",
+      "mimeType='audio/mpeg'",
     ].join(' and ');
 
     const res = await drive.files.list({
