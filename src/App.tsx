@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Container,
   Card,
@@ -15,8 +15,13 @@ import {
 } from '@mui/material';
 import { PlayArrow, Pause, SkipNext, SkipPrevious } from '@mui/icons-material';
 
-type Track = { id: string; title: string; artist?: string; artwork?: string };
-const driveUrl = (id: string) => `https://drive.google.com/uc?export=download&id=${id}`;
+type Track = {
+  id: string;
+  title: string;
+  artist?: string;
+  artwork?: string;
+  mimeType?: string;
+};
 
 export default function App() {
   const [tracks, setTracks] = useState<Track[]>([]);
@@ -26,13 +31,17 @@ export default function App() {
   const [current, setCurrent] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
-  const src = useMemo(() => (tracks[index] ? driveUrl(tracks[index].id) : ''), [tracks, index]);
-
+  // API 呼び出しで一覧取得
   useEffect(() => {
-    fetch('/tracks.json')
+    fetch('/.netlify/functions/list')
       .then((r) => r.json())
-      .then(setTracks);
+      .then((d) => setTracks(d.tracks));
   }, []);
+
+  const src = useMemo(
+    () => (tracks[index] ? `/.netlify/functions/stream/${tracks[index].id}` : ''),
+    [tracks, index]
+  );
 
   const onLoaded = () => setDuration(audioRef.current?.duration ?? 0);
   const onTime = () => setCurrent(audioRef.current?.currentTime ?? 0);
@@ -41,44 +50,63 @@ export default function App() {
     if (audioRef.current) audioRef.current.currentTime = val;
   };
 
-  const play = async () => {
+  // ---- useCallback で安定化 ----
+  const play = useCallback(async () => {
     if (!audioRef.current) return;
     await audioRef.current.play();
     setPlaying(true);
-  };
-  const pause = () => {
+  }, []);
+
+  const pause = useCallback(() => {
     audioRef.current?.pause();
     setPlaying(false);
-  };
-  const prev = () => setIndex((i) => Math.max(0, i - 1));
-  const next = () => setIndex((i) => Math.min(tracks.length - 1, i + 1));
+  }, []);
 
+  const prev = useCallback(() => {
+    setIndex((i) => Math.max(0, i - 1));
+  }, []);
+
+  const next = useCallback(() => {
+    setIndex((i) => Math.min(tracks.length - 1, i + 1));
+  }, [tracks.length]);
+  // ----------------------------
+
+  // Media Session API 設定
   useEffect(() => {
     if (!('mediaSession' in navigator) || !tracks[index]) return;
     const t = tracks[index];
     navigator.mediaSession.metadata = new MediaMetadata({
       title: t.title,
       artist: t.artist ?? '',
-      artwork: t.artwork ? [{ src: t.artwork, sizes: '512x512', type: 'image/jpeg' }] : [],
+      artwork: t.artwork
+        ? [
+            {
+              src: t.artwork,
+              sizes: '512x512',
+              type: 'image/jpeg',
+            },
+          ]
+        : [],
     });
+
     navigator.mediaSession.setActionHandler?.('play', play);
     navigator.mediaSession.setActionHandler?.('pause', pause);
     navigator.mediaSession.setActionHandler?.('previoustrack', prev);
     navigator.mediaSession.setActionHandler?.('nexttrack', next);
-  }, [index, tracks]);
+  }, [index, tracks, play, pause, prev, next]);
 
+  // 曲切替時にリセット & 自動再生
   useEffect(() => {
-    // 曲切替で自動再生（任意）
     if (audioRef.current) {
       audioRef.current.load();
       play().catch(() => {});
     }
     setCurrent(0);
-  }, [src]);
+  }, [src, play]);
 
   const fmt = (s: number) => {
-    const m = Math.floor(s / 60),
-      sec = Math.floor(s % 60);
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
     return `${m}:${sec.toString().padStart(2, '0')}`;
   };
 
