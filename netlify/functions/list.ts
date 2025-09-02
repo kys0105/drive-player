@@ -4,11 +4,7 @@ import { getDrive } from './_drive';
 function guessAudioMimeByName(name: string, driveMime?: string): string {
   const n = name.toLowerCase();
   if (n.endsWith('.mp3')) return 'audio/mpeg';
-  if (n.endsWith('.m4a') || n.endsWith('.aac')) return 'audio/mp4';
   if (driveMime && driveMime.startsWith('audio/')) return driveMime;
-  if ((n.endsWith('.m4a') || n.endsWith('.aac')) && driveMime === 'video/mp4') {
-    return 'audio/mp4';
-  }
   return driveMime ?? 'application/octet-stream';
 }
 
@@ -25,18 +21,10 @@ export const handler: Handler = async () => {
 
     const drive = getDrive();
 
-    // m4a が video/mp4 になっていることがあるため、検索は広めに
     const q = [
       `'${folderId}' in parents`,
       'trashed=false',
-      '(' +
-        [
-          "mimeType='audio/mpeg'",
-          "mimeType='audio/mp4'",
-          "mimeType='audio/x-m4a'",
-          "mimeType='video/mp4'", // m4a がこれで返る場合がある
-        ].join(' or ') +
-        ')',
+      "mimeType='audio/mpeg'",
     ].join(' and ');
 
     const res = await drive.files.list({
