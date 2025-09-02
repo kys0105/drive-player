@@ -1,35 +1,76 @@
 import type { Handler } from '@netlify/functions';
 import { getDrive } from './_drive';
 
-export const handler: Handler = async (event) => {
-  const folderId = event.queryStringParameters?.folderId || process.env.FOLDER_ID;
-  if (!folderId) return { statusCode: 400, body: 'folderId required' };
+function guessAudioMimeByName(name: string, driveMime?: string): string {
+  const n = name.toLowerCase();
+  if (n.endsWith('.mp3')) return 'audio/mpeg';
+  if (n.endsWith('.m4a') || n.endsWith('.aac')) return 'audio/mp4';
+  if (driveMime && driveMime.startsWith('audio/')) return driveMime;
+  if ((n.endsWith('.m4a') || n.endsWith('.aac')) && driveMime === 'video/mp4') {
+    return 'audio/mp4';
+  }
+  return driveMime ?? 'application/octet-stream';
+}
 
-  const drive = getDrive();
-  const q = [
-    `'${folderId}' in parents`,
-    "(mimeType='audio/mpeg' or mimeType='audio/mp4' or mimeType='audio/x-m4a')",
-    'trashed=false',
-  ].join(' and ');
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
 
-  const res = await drive.files.list({
-    q,
-    fields: 'files(id,name,mimeType,size,modifiedTime)',
-    orderBy: 'name_natural',
-    pageSize: 200,
-  });
+export const handler: Handler = async () => {
+  try {
+    const folderId = process.env.FOLDER_ID;
+    if (!folderId) {
+      return { statusCode: 500, body: 'FOLDER_ID is not set' };
+    }
 
-  const tracks = (res.data.files ?? []).map((f) => ({
-    id: f.id,
-    title: f.name,
-    mimeType: f.mimeType,
-    size: f.size,
-    modifiedTime: f.modifiedTime,
-  }));
+    const drive = getDrive();
 
-  return {
-    statusCode: 200,
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ tracks }),
-  };
+    // m4a が video/mp4 になっていることがあるため、検索は広めに
+    const q = [
+      `'${folderId}' in parents`,
+      'trashed=false',
+      '(' +
+        [
+          "mimeType='audio/mpeg'",
+          "mimeType='audio/mp4'",
+          "mimeType='audio/x-m4a'",
+          "mimeType='video/mp4'", // m4a がこれで返る場合がある
+        ].join(' or ') +
+        ')',
+    ].join(' and ');
+
+    const res = await drive.files.list({
+      q,
+      fields: 'files(id,name,mimeType,iconLink,thumbnailLink,modifiedTime,size),nextPageToken',
+      orderBy: 'name_natural',
+      pageSize: 1000,
+      // pageToken のハンドリングは必要に応じて（今回は 1000 件まで）
+    });
+
+    const files = res.data.files ?? [];
+
+    const tracks = files.map((f) => {
+      const name = f.name ?? 'audio';
+      const driveMime = f.mimeType ?? '';
+      const guessed = guessAudioMimeByName(name, driveMime);
+      return {
+        id: f.id!,
+        title: name,
+        mimeType: guessed, // UI 用（<audio> canPlayType 判定に）
+        driveMimeType: driveMime, // デバッグ確認用
+        artwork: f.thumbnailLink ?? undefined,
+        artist: '', // 必要なら命名規則で抽出
+        size: f.size ? Number(f.size) : undefined,
+        modifiedTime: f.modifiedTime ?? undefined,
+      };
+    });
+
+    return {
+      statusCode: 200,
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ tracks }),
+    };
+  } catch (e: unknown) {
+    return { statusCode: 500, body: errMsg(e) };
+  }
 };

@@ -1,17 +1,23 @@
-// netlify/functions/stream.ts （該当箇所だけ差し替え）
 import type { Handler } from '@netlify/functions';
-import { getDrive } from './_drive';
 import type { Readable } from 'node:stream';
+import { getDrive } from './_drive';
 
-function guessAudioMime(name: string, driveMime: string | undefined) {
+/** Drive の mimeType が不正確でも拡張子から確実に audio/*
+ *  に補正します（m4a=audio/mp4, mp3=audio/mpeg）。
+ */
+function guessAudioMime(name: string, driveMime?: string): string {
   const n = name.toLowerCase();
   if (n.endsWith('.mp3')) return 'audio/mpeg';
-  if (n.endsWith('.m4a') || n.endsWith('.aac')) return 'audio/mp4'; // m4aは実質AAC in MP4
-  // Driveの値が妥当なら使う
+  if (n.endsWith('.m4a') || n.endsWith('.aac')) return 'audio/mp4'; // AAC in MP4 想定
   if (driveMime && driveMime.startsWith('audio/')) return driveMime;
-  // Driveがvideo/mp4だが拡張子がm4a系なら補正
-  if ((n.endsWith('.m4a') || n.endsWith('.aac')) && driveMime === 'video/mp4') return 'audio/mp4';
-  return 'audio/mpeg'; // 最低限でmp3扱いにフォールバック
+  if ((n.endsWith('.m4a') || n.endsWith('.aac')) && driveMime === 'video/mp4') {
+    return 'audio/mp4';
+  }
+  return 'audio/mpeg';
+}
+
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 export const handler: Handler = async (event) => {
@@ -21,21 +27,21 @@ export const handler: Handler = async (event) => {
 
     const drive = getDrive();
 
-    // メタ情報取得（nameも取得）
+    // メタ情報（name / mimeType / size を取得）
     const meta = await drive.files.get({
       fileId,
       fields: 'id,name,mimeType,size',
       alt: 'json',
     });
 
-    const name = meta.data.name || '';
-    const driveMime = meta.data.mimeType || undefined;
+    const name = meta.data.name ?? 'audio';
+    const driveMime = meta.data.mimeType ?? '';
     const mime = guessAudioMime(name, driveMime);
 
     const sizeNum = Number(meta.data.size ?? 0);
     const hasSize = Number.isFinite(sizeNum) && sizeNum > 0;
 
-    // Range
+    // Range リクエスト対応
     const range = event.headers['range'];
     let start = 0;
     let end = hasSize ? sizeNum - 1 : undefined;
@@ -47,7 +53,7 @@ export const handler: Handler = async (event) => {
       }
     }
 
-    // Drive から取得（Range 対応）
+    // Drive から本体取得（Range があれば伝搬）
     const resp = await drive.files.get(
       { fileId, alt: 'media' },
       {
@@ -56,7 +62,7 @@ export const handler: Handler = async (event) => {
       }
     );
 
-    // stream -> Buffer
+    // stream → Buffer（Netlify との相性を考え base64 応答）
     const stream = resp.data as unknown as Readable;
     const chunks: Buffer[] = [];
     await new Promise<void>((resolve, reject) => {
@@ -66,16 +72,18 @@ export const handler: Handler = async (event) => {
     });
     const buf = Buffer.concat(chunks);
 
-    // ヘッダ
+    // 応答ヘッダ
     const headers: Record<string, string> = {
       'Content-Type': mime,
       'Accept-Ranges': 'bytes',
       'Cache-Control': 'no-store',
-      'Content-Length': String(buf.byteLength),
     };
+
     if (range && hasSize && end !== undefined) {
       headers['Content-Range'] = `bytes ${start}-${end}/${sizeNum}`;
       headers['Content-Length'] = String(end - start + 1);
+    } else {
+      headers['Content-Length'] = String(buf.byteLength);
     }
 
     return {
@@ -85,7 +93,6 @@ export const handler: Handler = async (event) => {
       isBase64Encoded: true,
     };
   } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return { statusCode: 500, body: msg };
+    return { statusCode: 500, body: errMsg(e) };
   }
 };
