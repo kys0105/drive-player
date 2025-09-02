@@ -3,16 +3,12 @@ import type { Readable } from 'node:stream';
 import { getDrive } from './_drive';
 
 /** Drive の mimeType が不正確でも拡張子から確実に audio/*
- *  に補正します（m4a=audio/mp4, mp3=audio/mpeg）。
+ *  に補正します（mp3=audio/mpeg）。
  */
 function guessAudioMime(name: string, driveMime?: string): string {
   const n = name.toLowerCase();
   if (n.endsWith('.mp3')) return 'audio/mpeg';
-  if (n.endsWith('.m4a') || n.endsWith('.aac')) return 'audio/mp4'; // AAC in MP4 想定
   if (driveMime && driveMime.startsWith('audio/')) return driveMime;
-  if ((n.endsWith('.m4a') || n.endsWith('.aac')) && driveMime === 'video/mp4') {
-    return 'audio/mp4';
-  }
   return 'audio/mpeg';
 }
 
