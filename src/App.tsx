@@ -35,46 +35,6 @@ export default function App() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const wantAutoPlayRef = useRef(false); // canplay 到達での自動再生予約
 
-  // ---- デバッグ用: audio イベント全ログ ----
-  useEffect(() => {
-    const el = audioRef.current;
-    if (!el) return;
-    const log = (ev: Event) => {
-      const errMsg = el.error ? ((el.error as unknown as { message?: string }).message ?? '') : '';
-      console.log(`[audio] ${ev.type}`, {
-        readyState: el.readyState,
-        paused: el.paused,
-        ct: el.currentTime,
-        err: errMsg,
-      });
-    };
-    const events = [
-      'loadstart',
-      'loadedmetadata',
-      'loadeddata',
-      'canplay',
-      'canplaythrough',
-      'play',
-      'playing',
-      'pause',
-      'ended',
-      'waiting',
-      'stalled',
-      'suspend',
-      'error',
-      'seeking',
-      'seeked',
-      'timeupdate',
-      'progress',
-      'ratechange',
-      'volumechange',
-      'durationchange',
-    ];
-    events.forEach((t) => el.addEventListener(t, log));
-    return () => events.forEach((t) => el.removeEventListener(t, log));
-  }, [index]);
-  // ------------------------------------------
-
   // リスト取得
   useEffect(() => {
     (async () => {
@@ -127,45 +87,6 @@ export default function App() {
       console.error('play failed', e);
     }
   }, [userInteracted]);
-
-  // Blob 経由再生（診断用）
-  const playViaBlob = useCallback(async () => {
-    if (!userInteracted) return;
-    const t = tracks[index];
-    if (!t) return;
-    try {
-      const r = await fetch(`/.netlify/functions/stream/${t.id}`);
-      if (!r.ok) {
-        console.error('blob fetch failed', r.status, await r.text());
-        return;
-      }
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-
-      const el = audioRef.current;
-      if (!el) return;
-
-      // 既存 URL を退避
-      const prev = el.src;
-      el.src = url;
-      el.load();
-
-      el.oncanplay = () => {
-        el.oncanplay = null;
-        void el
-          .play()
-          .then(() => setPlaying(true))
-          .catch(console.error);
-      };
-
-      // 古い blob URL を解放
-      if (prev && prev.startsWith('blob:')) {
-        setTimeout(() => URL.revokeObjectURL(prev), 5000);
-      }
-    } catch (e) {
-      console.error('playViaBlob failed', e);
-    }
-  }, [userInteracted, tracks, index]);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
@@ -232,12 +153,10 @@ export default function App() {
             </div>
           </Stack>
 
-          {/* デバッグのため controls 表示。<source type> を明示 */}
           {src && (
             <audio
               ref={audioRef}
               src={src}
-              controls
               crossOrigin="anonymous"
               preload="metadata"
               onLoadedMetadata={onLoaded}
@@ -262,34 +181,19 @@ export default function App() {
                 <Pause />
               </IconButton>
             ) : (
-              <>
-                <Tooltip title="通常再生">
-                  <span>
-                    <IconButton
-                      onClick={() => {
-                        setUserInteracted(true);
-                        void play();
-                      }}
-                      disabled={!src || !canPlayThis}
-                    >
-                      <PlayArrow />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-                <Tooltip title="Blob 経由で再生（診断用）">
-                  <span>
-                    <IconButton
-                      onClick={() => {
-                        setUserInteracted(true);
-                        void playViaBlob();
-                      }}
-                      disabled={!src}
-                    >
-                      <PlayArrow />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </>
+              <Tooltip title="再生">
+                <span>
+                  <IconButton
+                    onClick={() => {
+                      setUserInteracted(true);
+                      void play();
+                    }}
+                    disabled={!src || !canPlayThis}
+                  >
+                    <PlayArrow />
+                  </IconButton>
+                </span>
+              </Tooltip>
             )}
 
             <IconButton onClick={next} disabled={index >= tracks.length - 1}>
