@@ -1,6 +1,6 @@
 import type { Handler } from '@netlify/functions';
-import type { Readable } from 'node:stream';
 import { getDrive } from './_drive';
+import type { Readable } from 'node:stream';
 
 export const handler: Handler = async (event) => {
   const fileId = event.path.split('/').pop();
@@ -8,7 +8,7 @@ export const handler: Handler = async (event) => {
 
   const drive = getDrive();
 
-  // メタ情報取得（MIME / サイズ）
+  // メタ情報（サイズ・MIME）
   const meta = await drive.files.get({
     fileId,
     fields: 'id,name,mimeType,size',
@@ -38,20 +38,26 @@ export const handler: Handler = async (event) => {
   if (size && end !== undefined) headers['Content-Length'] = String(end - start + 1);
   if (range && size) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
 
-  // Google Drive からストリーム取得（Range対応）
+  // Drive からデータ取得（Range対応）
   const resp = await drive.files.get(
     { fileId, alt: 'media' },
     { responseType: 'stream', headers: range ? { Range: `bytes=${start}-${end}` } : {} }
   );
 
-  // 型は Readable に明示キャスト
+  // ストリーム→Bufferに読み込み、base64 で返す
   const stream = resp.data as unknown as Readable;
+  const chunks: Buffer[] = [];
+  await new Promise<void>((resolve, reject) => {
+    stream.on('data', (d) => chunks.push(Buffer.isBuffer(d) ? d : Buffer.from(d)));
+    stream.on('end', resolve);
+    stream.on('error', reject);
+  });
+  const buf = Buffer.concat(chunks);
 
   return {
     statusCode: range && size ? 206 : 200,
     headers,
-    // Netlify Node Functions は Readable を body に渡せます
-    body: stream as unknown as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-    isBase64Encoded: false,
+    body: buf.toString('base64'),
+    isBase64Encoded: true,
   };
 };
