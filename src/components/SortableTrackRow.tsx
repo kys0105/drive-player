@@ -31,7 +31,13 @@ export function SortableTrackRow({
         <ListItemIcon
           {...attributes}
           {...listeners}
-          sx={{ minWidth: 32, mr: 1, cursor: 'grab', color: 'text.secondary' }}
+          sx={{
+            minWidth: 40,
+            mr: 1,
+            cursor: 'grab',
+            color: 'text.secondary',
+            touchAction: 'none',
+          }}
         >
           <DragIndicator />
         </ListItemIcon>
