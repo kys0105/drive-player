@@ -13,15 +13,35 @@ import {
   Stack,
   Avatar,
   Tooltip,
+  Box,
+  ListItemIcon,
 } from '@mui/material';
-import { PlayArrow, Pause, SkipNext, SkipPrevious } from '@mui/icons-material';
+import { PlayArrow, Pause, SkipNext, SkipPrevious, DragIndicator } from '@mui/icons-material';
+
+// dnd-kit
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+  SortableContext,
+  useSortable,
+  arrayMove,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 type Track = {
   id: string;
   title: string;
   artist?: string;
   artwork?: string;
-  mimeType?: string; // list.ts が返す想定（任意）
+  mimeType?: string;
 };
 
 export default function App() {
@@ -33,9 +53,14 @@ export default function App() {
   const [userInteracted, setUserInteracted] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const wantAutoPlayRef = useRef(false); // canplay 到達での自動再生予約
+  const wantAutoPlayRef = useRef(false);
 
-  // リスト取得
+  // dnd sensors
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor)
+  );
+
   useEffect(() => {
     (async () => {
       const r = await fetch('/.netlify/functions/list');
@@ -48,13 +73,11 @@ export default function App() {
     })();
   }, []);
 
-  // 空文字は返さない
   const src = useMemo(
     () => (tracks[index] ? `/.netlify/functions/stream/${tracks[index].id}` : undefined),
     [tracks, index]
   );
 
-  // ブラウザ簡易対応判定（mimeType があれば優先）
   const canPlayThis = useMemo(() => {
     const t = tracks[index];
     if (!t) return false;
@@ -69,14 +92,12 @@ export default function App() {
     if (audioRef.current) audioRef.current.currentTime = val;
   };
 
-  // 通常再生
   const play = useCallback(async () => {
-    if (!userInteracted) return; // 自動再生ブロック対策
+    if (!userInteracted) return;
     const el = audioRef.current;
     if (!el) return;
 
     if (el.readyState === 0) {
-      // まだ読み込み前なら canplay まで待つ
       wantAutoPlayRef.current = true;
       return;
     }
@@ -114,12 +135,12 @@ export default function App() {
     navigator.mediaSession.setActionHandler?.('nexttrack', next);
   }, [index, tracks, play, pause, prev, next]);
 
-  // 曲切替時：load のみ。canplay で再生
+  // 曲切替時
   useEffect(() => {
     const el = audioRef.current;
     if (el && src) {
       el.load();
-      wantAutoPlayRef.current = userInteracted; // 操作済みなら再生予約
+      wantAutoPlayRef.current = userInteracted;
     }
     setCurrent(0);
   }, [src, userInteracted]);
@@ -128,6 +149,22 @@ export default function App() {
     const m = Math.floor(s / 60);
     const sec = Math.floor(s % 60);
     return `${m}:${sec.toString().padStart(2, '0')}`;
+  };
+
+  // 並べ替え確定
+  const handleDragEnd = (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = tracks.findIndex((t) => t.id === active.id);
+    const newIndex = tracks.findIndex((t) => t.id === over.id);
+    const newList = arrayMove(tracks, oldIndex, newIndex);
+    setTracks(newList);
+
+    // 再生中の曲インデックスを追従
+    if (index === oldIndex) setIndex(newIndex);
+    else if (oldIndex < index && newIndex >= index) setIndex((i) => i - 1);
+    else if (oldIndex > index && newIndex <= index) setIndex((i) => i + 1);
   };
 
   const t = tracks[index];
@@ -141,16 +178,19 @@ export default function App() {
     >
       <Card sx={{ mb: 2 }}>
         <CardContent>
+          {/* 上段：アートワーク＋タイトル */}
           <Stack direction="row" spacing={2} alignItems="center">
-            <Avatar variant="rounded" src={t?.artwork} sx={{ width: 72, height: 72 }}>
+            <Avatar variant="rounded" src={t?.artwork} sx={{ width: 80, height: 80 }}>
               {t?.title?.[0]}
             </Avatar>
-            <div>
-              <Typography variant="h6">{t?.title ?? '…'}</Typography>
-              <Typography variant="body2" color="text.secondary">
+            <Box>
+              <Typography variant="h6" noWrap>
+                {t?.title ?? '…'}
+              </Typography>
+              <Typography variant="body2" color="text.secondary" noWrap>
                 {t?.artist ?? ''}
               </Typography>
-            </div>
+            </Box>
           </Stack>
 
           {src && (
@@ -171,13 +211,14 @@ export default function App() {
             />
           )}
 
+          {/* 中段：操作ボタンと時刻表示（横幅を取りすぎない） */}
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
-            <IconButton onClick={prev} disabled={index === 0}>
+            <IconButton onClick={prev} disabled={index === 0} size="large">
               <SkipPrevious />
             </IconButton>
 
             {playing ? (
-              <IconButton onClick={pause} disabled={!src}>
+              <IconButton onClick={pause} disabled={!src} size="large">
                 <Pause />
               </IconButton>
             ) : (
@@ -189,6 +230,7 @@ export default function App() {
                       void play();
                     }}
                     disabled={!src || !canPlayThis}
+                    size="large"
                   >
                     <PlayArrow />
                   </IconButton>
@@ -196,13 +238,20 @@ export default function App() {
               </Tooltip>
             )}
 
-            <IconButton onClick={next} disabled={index >= tracks.length - 1}>
+            <IconButton onClick={next} disabled={index >= tracks.length - 1} size="large">
               <SkipNext />
             </IconButton>
 
-            <Typography variant="body2" sx={{ ml: 1, width: 48, textAlign: 'right' }}>
+            <Typography variant="body2" sx={{ ml: 1, width: 56, textAlign: 'right' }}>
               {fmt(current)}
             </Typography>
+            <Typography variant="body2" sx={{ width: 56, textAlign: 'left' }}>
+              {fmt(duration)}
+            </Typography>
+          </Stack>
+
+          {/* 下段：タイムライン（横幅いっぱい・1段分下げる） */}
+          <Box sx={{ mt: 1 }}>
             <Slider
               value={Math.min(current, duration)}
               min={0}
@@ -210,32 +259,84 @@ export default function App() {
               step={1}
               onChange={onSeek}
               aria-label="seek"
-              sx={{ mx: 1, flex: 1 }}
               disabled={!src}
+              sx={{
+                width: '100%',
+                // クリックしやすい高さ
+                height: 4,
+                '& .MuiSlider-thumb': { width: 14, height: 14 },
+              }}
             />
-            <Typography variant="body2" sx={{ width: 48 }}>
-              {fmt(duration)}
-            </Typography>
-          </Stack>
+          </Box>
         </CardContent>
       </Card>
 
+      {/* プレイリスト：ドラッグ&ドロップで順序変更 */}
       <Card>
         <CardContent>
           <Typography variant="subtitle1" sx={{ mb: 1 }}>
             プレイリスト
           </Typography>
-          <List dense>
-            {tracks.map((x, i) => (
-              <ListItem key={x.id} disablePadding>
-                <ListItemButton selected={i === index} onClick={() => setIndex(i)}>
-                  <ListItemText primary={x.title} secondary={x.artist} />
-                </ListItemButton>
-              </ListItem>
-            ))}
-          </List>
+
+          <DndContext
+            sensors={sensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleDragEnd}
+          >
+            <SortableContext items={tracks.map((x) => x.id)} strategy={verticalListSortingStrategy}>
+              <List dense>
+                {tracks.map((x, i) => (
+                  <SortableTrackRow
+                    key={x.id}
+                    track={x}
+                    selected={i === index}
+                    onClick={() => setIndex(i)}
+                  />
+                ))}
+              </List>
+            </SortableContext>
+          </DndContext>
         </CardContent>
       </Card>
     </Container>
+  );
+}
+
+/** 並べ替え可能な行 */
+function SortableTrackRow({
+  track,
+  selected,
+  onClick,
+}: {
+  track: Track;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: track.id,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    // ドラッグ中の視認性
+    opacity: isDragging ? 0.6 : 1,
+    background: selected ? 'rgba(25, 118, 210, 0.08)' : undefined,
+    borderRadius: 8,
+  } as const;
+
+  return (
+    <ListItem ref={setNodeRef} style={style} disablePadding secondaryAction={null}>
+      <ListItemButton selected={selected} onClick={onClick}>
+        <ListItemIcon
+          {...attributes}
+          {...listeners}
+          sx={{ minWidth: 32, mr: 1, cursor: 'grab', color: 'text.secondary' }}
+        >
+          <DragIndicator />
+        </ListItemIcon>
+        <ListItemText primary={track.title} secondary={track.artist} />
+      </ListItemButton>
+    </ListItem>
   );
 }
