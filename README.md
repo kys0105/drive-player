@@ -1,79 +1,65 @@
-# React + TypeScript + Vite
+# Drive Player
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Google ドライブ上の音声ファイルを再生する React + TypeScript + Vite プロジェクトです。Netlify Functions を介して Google Drive API にアクセスします。
 
-Currently, two official plugins are available:
+## 必要なもの
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+- Node.js 20 以上
+- npm
 
-## Debugging with Netlify CLI
+## 環境設定
 
-If you need to run the development server together with Netlify Functions, start it via the Netlify CLI:
+1. リポジトリのクローン
 
-```bash
-netlify dev
-```
+   ```bash
+   git clone <REPO_URL>
+   cd drive-player
+   ```
 
-This command launches a local server with Vite and Netlify Functions for debugging.
+2. 依存関係のインストール
 
-## Expanding the ESLint configuration
+   ```bash
+   npm install
+   ```
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+3. 環境変数の設定
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+   `.env` ファイルを作成し、次の変数を記述してください。
 
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
+   ```env
+   GOOGLE_SERVICE_ACCOUNT=...       # または GOOGLE_SERVICE_ACCOUNT_BASE64
+   FOLDER_ID=Google Drive のフォルダ ID
+   ```
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+   `GOOGLE_SERVICE_ACCOUNT` には Google Cloud で取得したサービスアカウントの JSON を直接記載するか、Base64 でエンコードした内容を `GOOGLE_SERVICE_ACCOUNT_BASE64` に設定します。`FOLDER_ID` は再生対象フォルダの ID です。
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+4. Netlify CLI のインストール（任意）
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+   ```bash
+   npm install -g netlify-cli
+   ```
 
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+## 開発
+
+- 開発サーバー
+
+  ```bash
+  npm run dev
+  ```
+
+- Netlify Functions と同時に起動
+
+  ```bash
+  netlify dev
+  ```
+
+## よく使うコマンド
+
+| コマンド            | 説明                                      |
+| ------------------- | ----------------------------------------- |
+| `npm run lint`      | ESLint による静的解析                     |
+| `npm run build`     | TypeScript をビルドし Vite で成果物を作成 |
+| `npm run preview`   | ビルド済みアプリのローカルプレビュー     |
+
+Netlify へデプロイする場合も同じ環境変数を設定してください。
+
