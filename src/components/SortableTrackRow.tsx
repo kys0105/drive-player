@@ -1,0 +1,42 @@
+import { ListItem, ListItemButton, ListItemIcon, ListItemText } from '@mui/material';
+import { DragIndicator } from '@mui/icons-material';
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import type { Track } from '../types';
+
+export function SortableTrackRow({
+  track,
+  selected,
+  onClick,
+}: {
+  track: Track;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: track.id,
+  });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.6 : 1,
+    background: selected ? 'rgba(25, 118, 210, 0.08)' : undefined,
+    borderRadius: 8,
+  } as const;
+
+  return (
+    <ListItem ref={setNodeRef} style={style} disablePadding secondaryAction={null}>
+      <ListItemButton selected={selected} onClick={onClick}>
+        <ListItemIcon
+          {...attributes}
+          {...listeners}
+          sx={{ minWidth: 32, mr: 1, cursor: 'grab', color: 'text.secondary' }}
+        >
+          <DragIndicator />
+        </ListItemIcon>
+        <ListItemText primary={track.title} secondary={track.artist} />
+      </ListItemButton>
+    </ListItem>
+  );
+}
