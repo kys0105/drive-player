@@ -157,7 +157,14 @@ export default function PlayerScreen() {
   return (
     <Container
       maxWidth="sm"
-      sx={{ py: 2 }}
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        justifyContent: 'center',
+        alignItems: 'center',
+        minHeight: '100vh',
+        py: 2,
+      }}
       onClick={() => setUserInteracted(true)}
       onTouchStart={() => setUserInteracted(true)}
     >
