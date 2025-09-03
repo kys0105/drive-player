@@ -21,7 +21,7 @@ export function SortableTrackRow({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.6 : 1,
-    background: selected ? 'rgba(25, 118, 210, 0.08)' : undefined,
+    background: selected ? 'rgba(143, 162, 255, 0.15)' : undefined,
     borderRadius: 8,
   } as const;
 
