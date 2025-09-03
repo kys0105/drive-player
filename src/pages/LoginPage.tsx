@@ -18,7 +18,10 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
   };
 
   return (
-    <Container maxWidth="xs" sx={{ py: 8 }}>
+    <Container
+      maxWidth="xs"
+      sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}
+    >
       <Card>
         <CardContent>
           {error && (
