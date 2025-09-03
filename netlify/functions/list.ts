@@ -8,6 +8,15 @@ function guessAudioMimeByName(name: string, driveMime?: string): string {
   return 'audio/mpeg';
 }
 
+function formatTitle(name: string): string {
+  const underscoreIndex = name.indexOf('_');
+  if (underscoreIndex >= 0) {
+    return name.slice(0, underscoreIndex);
+  }
+  const dotIndex = name.lastIndexOf('.');
+  return dotIndex >= 0 ? name.slice(0, dotIndex) : name;
+}
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -41,9 +50,10 @@ export const handler: Handler = async () => {
       const name = f.name ?? 'audio';
       const driveMime = f.mimeType ?? '';
       const guessed = guessAudioMimeByName(name, driveMime);
+      const title = formatTitle(name);
       return {
         id: f.id!,
-        title: name,
+        title,
         mimeType: guessed, // UI 用（<audio> canPlayType 判定に）
         driveMimeType: driveMime, // デバッグ確認用
         artwork: f.thumbnailLink ?? undefined,
