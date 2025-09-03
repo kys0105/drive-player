@@ -12,7 +12,7 @@ Google ドライブ上の音声ファイルを再生する React + TypeScript + 
 1. リポジトリのクローン
 
    ```bash
-   git clone <REPO_URL>
+   git clone https://github.com/kys0105/drive-player
    cd drive-player
    ```
 
@@ -37,6 +37,7 @@ Google ドライブ上の音声ファイルを再生する React + TypeScript + 
 
    ```bash
    npm install -g netlify-cli
+   netlify login
    ```
 
 ## 開発
@@ -55,11 +56,10 @@ Google ドライブ上の音声ファイルを再生する React + TypeScript + 
 
 ## よく使うコマンド
 
-| コマンド            | 説明                                      |
-| ------------------- | ----------------------------------------- |
-| `npm run lint`      | ESLint による静的解析                     |
-| `npm run build`     | TypeScript をビルドし Vite で成果物を作成 |
-| `npm run preview`   | ビルド済みアプリのローカルプレビュー     |
+| コマンド          | 説明                                      |
+| ----------------- | ----------------------------------------- |
+| `npm run lint`    | ESLint による静的解析                     |
+| `npm run build`   | TypeScript をビルドし Vite で成果物を作成 |
+| `npm run preview` | ビルド済みアプリのローカルプレビュー      |
 
 Netlify へデプロイする場合も同じ環境変数を設定してください。
-
