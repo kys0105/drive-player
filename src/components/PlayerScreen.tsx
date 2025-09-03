@@ -18,7 +18,8 @@ import { PlayArrow, Pause, SkipNext, SkipPrevious } from '@mui/icons-material';
 import {
   DndContext,
   closestCenter,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   KeyboardSensor,
   useSensor,
   useSensors,
@@ -42,7 +43,10 @@ export default function PlayerScreen() {
 
   // dnd sensors
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 250, tolerance: 5 },
+    }),
     useSensor(KeyboardSensor)
   );
 
