@@ -1,3 +1,4 @@
+// src/components/PlayerScreen.tsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import {
   Container,
@@ -30,6 +31,48 @@ import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-ki
 import type { Track } from '../types';
 import { SortableTrackRow } from './SortableTrackRow';
 
+/* -------------------- キャッシュ同期ユーティリティ -------------------- */
+
+const CACHE_NAME = 'audio-v1';
+const MANIFEST_KEY = 'audio-cache-manifest-v1'; // localStorage: { [id]: ver }
+type Manifest = Record<string, string>;
+
+function buildStreamUrl(t: Track): string {
+  const v = encodeURIComponent(t.ver ?? '');
+  return `/.netlify/functions/stream/${t.id}?v=${v}`;
+}
+
+function loadManifest(): Manifest {
+  try {
+    return JSON.parse(localStorage.getItem(MANIFEST_KEY) || '{}');
+  } catch {
+    return {};
+  }
+}
+
+function saveManifest(m: Manifest) {
+  localStorage.setItem(MANIFEST_KEY, JSON.stringify(m));
+}
+
+async function hasCached(url: string): Promise<boolean> {
+  if (!('caches' in window)) return false;
+  const cache = await caches.open(CACHE_NAME);
+  const res = await cache.match(url);
+  return !!res;
+}
+
+async function cleanupCache(validAbsUrls: string[]) {
+  if (!('caches' in window)) return;
+  const cache = await caches.open(CACHE_NAME);
+  const keys = await cache.keys();
+  const valid = new Set(validAbsUrls);
+  await Promise.all(
+    keys.map((req) => (valid.has(req.url) ? Promise.resolve() : cache.delete(req)))
+  );
+}
+
+/* -------------------------------------------------------------------- */
+
 export default function PlayerScreen() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [index, setIndex] = useState(0);
@@ -57,6 +100,7 @@ export default function PlayerScreen() {
     useSensor(KeyboardSensor)
   );
 
+  // 起動時：楽曲リスト取得
   useEffect(() => {
     (async () => {
       const r = await fetch('/.netlify/functions/list');
@@ -69,8 +113,9 @@ export default function PlayerScreen() {
     })();
   }, []);
 
+  // 再生URL（?v= を含めてキャッシュ自動更新）
   const src = useMemo(
-    () => (tracks[index] ? `/.netlify/functions/stream/${tracks[index].id}` : undefined),
+    () => (tracks[index] ? buildStreamUrl(tracks[index]) : undefined),
     [tracks, index]
   );
 
@@ -121,14 +166,25 @@ export default function PlayerScreen() {
   );
 
   // Media Session
+  // Media Session
   useEffect(() => {
     if (!('mediaSession' in navigator) || !tracks[index]) return;
+
     const t = tracks[index];
-    navigator.mediaSession.metadata = new MediaMetadata({
-      title: t.title,
-      artist: t.artist ?? '',
-      artwork: t.artwork ? [{ src: t.artwork, sizes: '512x512', type: 'image/jpeg' }] : [],
-    });
+
+    // コンストラクタがあるブラウザのみ設定（型は d.ts で定義済み）
+    if (window.MediaMetadata) {
+      const ctor = window.MediaMetadata;
+      navigator.mediaSession.metadata = new ctor({
+        title: t.title,
+        artist: t.artist ?? '',
+        artwork: t.artwork ? [{ src: t.artwork, sizes: '512x512', type: 'image/jpeg' }] : [],
+      });
+    } else {
+      // 未対応ブラウザでは無理に代入しない
+      navigator.mediaSession.metadata = null;
+    }
+
     navigator.mediaSession.setActionHandler?.('play', play);
     navigator.mediaSession.setActionHandler?.('pause', pause);
     navigator.mediaSession.setActionHandler?.('previoustrack', prev);
@@ -157,16 +213,104 @@ export default function PlayerScreen() {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = tracks.findIndex((t) => t.id === active.id);
-    const newIndex = tracks.findIndex((t) => t.id === over.id);
-    const newList = arrayMove(tracks, oldIndex, newIndex);
-    setTracks(newList);
+    const oldIdx = tracks.findIndex((x) => x.id === active.id);
+    const newIdx = tracks.findIndex((x) => x.id === over.id);
+    if (oldIdx < 0 || newIdx < 0) return;
 
-    // 再生中の曲インデックスを追従
-    if (index === oldIndex) setIndex(newIndex);
-    else if (oldIndex < index && newIndex >= index) setIndex((i) => i - 1);
-    else if (oldIndex > index && newIndex <= index) setIndex((i) => i + 1);
+    setTracks((prev) => arrayMove(prev, oldIdx, newIdx));
+    // 再生中インデックスも調整
+    setIndex((idx) => {
+      if (idx === oldIdx) return newIdx;
+      if (oldIdx < idx && idx <= newIdx) return idx - 1;
+      if (newIdx <= idx && idx < oldIdx) return idx + 1;
+      return idx;
+    });
   };
+
+  /* -------------------- 起動時の自動キャッシュ同期 -------------------- */
+
+  // 行ごとの読み込みスピナー状態
+  const [loadingById, setLoadingById] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    if (!tracks.length || !('caches' in window)) return;
+
+    let aborted = false;
+
+    (async () => {
+      const oldManifest = loadManifest();
+      const newManifest: Manifest = {};
+
+      // 今回の正規URL（絶対URL）一覧（掃除用）
+      const validAbsUrls: string[] = [];
+
+      // 差分収集
+      const toFetch: { id: string; url: string; reason: 'missing' | 'updated' }[] = [];
+
+      for (const t of tracks) {
+        const url = buildStreamUrl(t);
+        const absUrl = new URL(url, location.origin).href;
+        validAbsUrls.push(absUrl);
+
+        const newVer = t.ver ?? '';
+        newManifest[t.id] = newVer;
+
+        const oldVer = oldManifest[t.id];
+        if (!oldVer) {
+          // マニフェストに無い＝初回 or 新規
+          if (!(await hasCached(url))) {
+            toFetch.push({ id: t.id, url, reason: 'missing' });
+          }
+        } else if (oldVer !== newVer) {
+          toFetch.push({ id: t.id, url, reason: 'updated' });
+        }
+      }
+
+      // スピナーON
+      if (toFetch.length) {
+        setLoadingById((prev) => {
+          const next = { ...prev };
+          for (const f of toFetch) next[f.id] = true;
+          return next;
+        });
+      }
+
+      // 順次フェッチ（SW が 200 レスポンスを Cache Storage に保存）
+      const cache = await caches.open(CACHE_NAME);
+      for (const f of toFetch) {
+        if (aborted) break;
+        try {
+          await fetch(f.url, { cache: 'reload' });
+          // 旧verの掃除
+          if (f.reason === 'updated') {
+            const oldVer = oldManifest[f.id];
+            if (oldVer) {
+              const oldUrl = `/.netlify/functions/stream/${f.id}?v=${encodeURIComponent(oldVer)}`;
+              await cache.delete(new Request(oldUrl));
+            }
+          }
+        } catch (e) {
+          console.warn('prefetch failed:', f.id, e);
+        } finally {
+          setLoadingById((prev) => ({ ...prev, [f.id]: false }));
+        }
+        // 帯域にやさしく
+        await new Promise((r) => setTimeout(r, 150));
+      }
+
+      // 孤児キャッシュ掃除（別フォルダの古い曲など）
+      await cleanupCache(validAbsUrls);
+
+      // 新マニフェスト保存
+      saveManifest(newManifest);
+    })();
+
+    return () => {
+      aborted = true;
+    };
+  }, [tracks]);
+
+  /* ------------------------------------------------------------------ */
 
   const t = tracks[index];
   const CONTENT_MAX_W = 560;
@@ -177,7 +321,6 @@ export default function PlayerScreen() {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'center',
         alignItems: 'center',
         minHeight: '100vh',
         py: 2,
@@ -194,39 +337,13 @@ export default function PlayerScreen() {
             </Avatar>
             <Box>
               <Typography variant="h6" noWrap>
-                {t?.title ?? '…'}
+                {t?.title ?? '—'}
               </Typography>
               <Typography variant="body2" color="text.secondary" noWrap>
                 {t?.artist ?? ''}
               </Typography>
             </Box>
           </Stack>
-
-          {src && (
-            <audio
-              ref={audioRef}
-              src={src}
-              crossOrigin="anonymous"
-              preload="metadata"
-              onLoadedMetadata={onLoaded}
-              onCanPlay={() => {
-                if (wantAutoPlayRef.current && interactedRef.current) {
-                  wantAutoPlayRef.current = false;
-                  void play();
-                }
-              }}
-              onTimeUpdate={onTime}
-              onEnded={next}
-              onError={(e) => {
-                const el = e.currentTarget;
-                console.error('AUDIO ERROR', el.error?.code, {
-                  networkState: el.networkState,
-                  readyState: el.readyState,
-                  src: el.currentSrc,
-                });
-              }}
-            />
-          )}
 
           {/* 中段：操作ボタンと時刻表示 */}
           <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
@@ -235,20 +352,17 @@ export default function PlayerScreen() {
             </IconButton>
 
             {playing ? (
-              <IconButton onClick={pause} disabled={!src} size="large">
-                <Pause />
-              </IconButton>
+              <Tooltip title="一時停止">
+                <span>
+                  <IconButton onClick={pause} disabled={!canPlayThis} size="large" color="primary">
+                    <Pause />
+                  </IconButton>
+                </span>
+              </Tooltip>
             ) : (
               <Tooltip title="再生">
                 <span>
-                  <IconButton
-                    onClick={() => {
-                      markInteracted();
-                      void play();
-                    }}
-                    disabled={!src || !canPlayThis}
-                    size="large"
-                  >
+                  <IconButton onClick={play} disabled={!canPlayThis} size="large" color="primary">
                     <PlayArrow />
                   </IconButton>
                 </span>
@@ -284,6 +398,33 @@ export default function PlayerScreen() {
               }}
             />
           </Box>
+
+          {/* オーディオ */}
+          {src && (
+            <audio
+              ref={audioRef}
+              src={src}
+              crossOrigin="anonymous"
+              preload="metadata"
+              onLoadedMetadata={onLoaded}
+              onCanPlay={() => {
+                if (wantAutoPlayRef.current && interactedRef.current) {
+                  wantAutoPlayRef.current = false;
+                  void play();
+                }
+              }}
+              onTimeUpdate={onTime}
+              onEnded={next}
+              onError={(e) => {
+                const el = e.currentTarget;
+                console.error('AUDIO ERROR', el.error?.code, {
+                  networkState: el.networkState,
+                  readyState: el.readyState,
+                  src: el.currentSrc,
+                });
+              }}
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -296,13 +437,14 @@ export default function PlayerScreen() {
             onDragEnd={handleDragEnd}
           >
             <SortableContext items={tracks.map((x) => x.id)} strategy={verticalListSortingStrategy}>
-              <List dense>
+              <List>
                 {tracks.map((x, i) => (
                   <SortableTrackRow
                     key={x.id}
                     track={x}
                     selected={i === index}
                     onClick={() => setIndex(i)}
+                    loading={!!loadingById[x.id]}
                   />
                 ))}
               </List>
