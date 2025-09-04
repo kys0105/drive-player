@@ -1,35 +1,12 @@
 // src/components/PlayerScreen.tsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import {
-  Container,
-  Card,
-  CardContent,
-  Typography,
-  IconButton,
-  Slider,
-  List,
-  Stack,
-  Avatar,
-  Tooltip,
-  Box,
-} from '@mui/material';
-import { PlayArrow, Pause, SkipNext, SkipPrevious } from '@mui/icons-material';
-
-// dnd-kit
-import {
-  DndContext,
-  closestCenter,
-  MouseSensor,
-  TouchSensor,
-  KeyboardSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
+import { Container } from '@mui/material';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { arrayMove } from '@dnd-kit/sortable';
 
 import type { Track } from '../types';
-import { SortableTrackRow } from './SortableTrackRow';
+import { PlayerControls } from './PlayerControls';
+import { Playlist } from './Playlist';
 
 /* -------------------- キャッシュ同期ユーティリティ -------------------- */
 
@@ -90,15 +67,6 @@ export default function PlayerScreen() {
       interactedRef.current = true;
     }
   }, []);
-
-  // dnd sensors
-  const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, {
-      activationConstraint: { delay: 250, tolerance: 5 },
-    }),
-    useSensor(KeyboardSensor)
-  );
 
   // 起動時：楽曲リスト取得
   useEffect(() => {
@@ -328,130 +296,38 @@ export default function PlayerScreen() {
       onClick={markInteracted}
       onTouchStart={markInteracted}
     >
-      <Card sx={{ mb: 2, width: '100%', maxWidth: CONTENT_MAX_W }}>
-        <CardContent>
-          {/* 上段：アートワーク＋タイトル */}
-          <Stack direction="row" spacing={2} alignItems="center">
-            <Avatar variant="rounded" src={t?.artwork} sx={{ width: 80, height: 80 }}>
-              {t?.title?.[0]}
-            </Avatar>
-            <Box>
-              <Typography variant="h6" noWrap>
-                {t?.title ?? '—'}
-              </Typography>
-              <Typography variant="body2" color="text.secondary" noWrap>
-                {t?.artist ?? ''}
-              </Typography>
-            </Box>
-          </Stack>
-
-          {/* 中段：操作ボタンと時刻表示 */}
-          <Stack direction="row" spacing={1} alignItems="center" sx={{ mt: 2 }}>
-            <IconButton onClick={prev} disabled={index === 0} size="large">
-              <SkipPrevious />
-            </IconButton>
-
-            {playing ? (
-              <Tooltip title="一時停止">
-                <span>
-                  <IconButton onClick={pause} disabled={!canPlayThis} size="large" color="primary">
-                    <Pause />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            ) : (
-              <Tooltip title="再生">
-                <span>
-                  <IconButton onClick={play} disabled={!canPlayThis} size="large" color="primary">
-                    <PlayArrow />
-                  </IconButton>
-                </span>
-              </Tooltip>
-            )}
-
-            <IconButton onClick={next} disabled={index >= tracks.length - 1} size="large">
-              <SkipNext />
-            </IconButton>
-
-            <Typography variant="body2" sx={{ ml: 1, width: 56, textAlign: 'right' }}>
-              {fmt(current)}
-            </Typography>
-            <Typography variant="body2" sx={{ width: 56, textAlign: 'left' }}>
-              {fmt(duration)}
-            </Typography>
-          </Stack>
-
-          {/* 下段：タイムライン（横幅いっぱい） */}
-          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center' }}>
-            <Slider
-              value={Math.min(current, duration)}
-              min={0}
-              max={duration || 0}
-              step={1}
-              onChange={onSeek}
-              aria-label="seek"
-              disabled={!src}
-              sx={{
-                width: '95%',
-                height: 4,
-                '& .MuiSlider-thumb': { width: 14, height: 14 },
-              }}
-            />
-          </Box>
-
-          {/* オーディオ */}
-          {src && (
-            <audio
-              ref={audioRef}
-              src={src}
-              crossOrigin="anonymous"
-              preload="metadata"
-              onLoadedMetadata={onLoaded}
-              onCanPlay={() => {
-                if (wantAutoPlayRef.current && interactedRef.current) {
-                  wantAutoPlayRef.current = false;
-                  void play();
-                }
-              }}
-              onTimeUpdate={onTime}
-              onEnded={next}
-              onError={(e) => {
-                const el = e.currentTarget;
-                console.error('AUDIO ERROR', el.error?.code, {
-                  networkState: el.networkState,
-                  readyState: el.readyState,
-                  src: el.currentSrc,
-                });
-              }}
-            />
-          )}
-        </CardContent>
-      </Card>
+      <PlayerControls
+        track={t}
+        index={index}
+        tracksLength={tracks.length}
+        playing={playing}
+        duration={duration}
+        current={current}
+        canPlayThis={canPlayThis}
+        src={src}
+        prev={prev}
+        next={next}
+        play={play}
+        pause={pause}
+        onSeek={onSeek}
+        onLoaded={onLoaded}
+        onTime={onTime}
+        audioRef={audioRef}
+        wantAutoPlayRef={wantAutoPlayRef}
+        interactedRef={interactedRef}
+        fmt={fmt}
+        maxWidth={CONTENT_MAX_W}
+      />
 
       {/* プレイリスト：ドラッグ&ドロップで順序変更 */}
-      <Card sx={{ width: '100%', maxWidth: CONTENT_MAX_W }}>
-        <CardContent>
-          <DndContext
-            sensors={sensors}
-            collisionDetection={closestCenter}
-            onDragEnd={handleDragEnd}
-          >
-            <SortableContext items={tracks.map((x) => x.id)} strategy={verticalListSortingStrategy}>
-              <List>
-                {tracks.map((x, i) => (
-                  <SortableTrackRow
-                    key={x.id}
-                    track={x}
-                    selected={i === index}
-                    onClick={() => setIndex(i)}
-                    loading={!!loadingById[x.id]}
-                  />
-                ))}
-              </List>
-            </SortableContext>
-          </DndContext>
-        </CardContent>
-      </Card>
+      <Playlist
+        tracks={tracks}
+        index={index}
+        setIndex={setIndex}
+        handleDragEnd={handleDragEnd}
+        loadingById={loadingById}
+        maxWidth={CONTENT_MAX_W}
+      />
     </Container>
   );
 }
