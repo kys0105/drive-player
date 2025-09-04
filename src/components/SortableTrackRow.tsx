@@ -27,16 +27,19 @@ export function SortableTrackRow({
 
   return (
     <ListItem ref={setNodeRef} style={style} disablePadding secondaryAction={null}>
-      <ListItemButton selected={selected} onClick={onClick}>
+      <ListItemButton
+        selected={selected}
+        onClick={onClick}
+        {...attributes}
+        {...listeners}
+        sx={{ touchAction: 'none', cursor: 'grab' }}
+      >
         <ListItemIcon
-          {...attributes}
-          {...listeners}
           sx={{
             minWidth: 40,
             mr: 1,
-            cursor: 'grab',
             color: 'text.secondary',
-            touchAction: 'none',
+            pointerEvents: 'none',
           }}
         >
           <DragIndicator />
