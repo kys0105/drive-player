@@ -36,10 +36,17 @@ export default function PlayerScreen() {
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
-  const [userInteracted, setUserInteracted] = useState(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const wantAutoPlayRef = useRef(false);
+
+  // 即時反映用の「操作済み」フラグ
+  const interactedRef = useRef(false);
+  const markInteracted = useCallback(() => {
+    if (!interactedRef.current) {
+      interactedRef.current = true;
+    }
+  }, []);
 
   // dnd sensors
   const sensors = useSensors(
@@ -82,11 +89,15 @@ export default function PlayerScreen() {
   };
 
   const play = useCallback(async () => {
-    if (!userInteracted) return;
     const el = audioRef.current;
     if (!el) return;
 
+    if (!interactedRef.current) {
+      // ユーザー操作前は再生しない（autoplay制限回避）
+      return;
+    }
     if (el.readyState === 0) {
+      // まだメディアが準備できてなければ、canplay で再試行
       wantAutoPlayRef.current = true;
       return;
     }
@@ -94,9 +105,9 @@ export default function PlayerScreen() {
       await el.play();
       setPlaying(true);
     } catch (e) {
-      console.error('play failed', e);
+      console.warn('play blocked', (e as Error).name);
     }
-  }, [userInteracted]);
+  }, []);
 
   const pause = useCallback(() => {
     audioRef.current?.pause();
@@ -129,10 +140,11 @@ export default function PlayerScreen() {
     const el = audioRef.current;
     if (el && src) {
       el.load();
-      wantAutoPlayRef.current = userInteracted;
+      // 直前にユーザー操作があったら、canplay で自動再生
+      wantAutoPlayRef.current = interactedRef.current;
     }
     setCurrent(0);
-  }, [src, userInteracted]);
+  }, [src]);
 
   const fmt = (s: number) => {
     const m = Math.floor(s / 60);
@@ -170,8 +182,8 @@ export default function PlayerScreen() {
         minHeight: '100vh',
         py: 2,
       }}
-      onClick={() => setUserInteracted(true)}
-      onTouchStart={() => setUserInteracted(true)}
+      onClick={markInteracted}
+      onTouchStart={markInteracted}
     >
       <Card sx={{ mb: 2, width: '100%', maxWidth: CONTENT_MAX_W }}>
         <CardContent>
@@ -198,13 +210,21 @@ export default function PlayerScreen() {
               preload="metadata"
               onLoadedMetadata={onLoaded}
               onCanPlay={() => {
-                if (wantAutoPlayRef.current) {
+                if (wantAutoPlayRef.current && interactedRef.current) {
                   wantAutoPlayRef.current = false;
                   void play();
                 }
               }}
               onTimeUpdate={onTime}
               onEnded={next}
+              onError={(e) => {
+                const el = e.currentTarget;
+                console.error('AUDIO ERROR', el.error?.code, {
+                  networkState: el.networkState,
+                  readyState: el.readyState,
+                  src: el.currentSrc,
+                });
+              }}
             />
           )}
 
@@ -223,7 +243,7 @@ export default function PlayerScreen() {
                 <span>
                   <IconButton
                     onClick={() => {
-                      setUserInteracted(true);
+                      markInteracted();
                       void play();
                     }}
                     disabled={!src || !canPlayThis}
