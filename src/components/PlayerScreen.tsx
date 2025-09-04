@@ -157,6 +157,7 @@ export default function PlayerScreen() {
   };
 
   const t = tracks[index];
+  const CONTENT_MAX_W = 560;
 
   return (
     <Container
@@ -172,7 +173,7 @@ export default function PlayerScreen() {
       onClick={() => setUserInteracted(true)}
       onTouchStart={() => setUserInteracted(true)}
     >
-      <Card sx={{ mb: 2 }}>
+      <Card sx={{ mb: 2, width: '100%', maxWidth: CONTENT_MAX_W }}>
         <CardContent>
           {/* 上段：アートワーク＋タイトル */}
           <Stack direction="row" spacing={2} alignItems="center">
@@ -247,7 +248,7 @@ export default function PlayerScreen() {
           </Stack>
 
           {/* 下段：タイムライン（横幅いっぱい） */}
-          <Box sx={{ mt: 1 }}>
+          <Box sx={{ mt: 1, display: 'flex', justifyContent: 'center' }}>
             <Slider
               value={Math.min(current, duration)}
               min={0}
@@ -257,7 +258,7 @@ export default function PlayerScreen() {
               aria-label="seek"
               disabled={!src}
               sx={{
-                width: '100%',
+                width: '95%',
                 height: 4,
                 '& .MuiSlider-thumb': { width: 14, height: 14 },
               }}
@@ -267,12 +268,8 @@ export default function PlayerScreen() {
       </Card>
 
       {/* プレイリスト：ドラッグ&ドロップで順序変更 */}
-      <Card>
+      <Card sx={{ width: '100%', maxWidth: CONTENT_MAX_W }}>
         <CardContent>
-          <Typography variant="subtitle1" sx={{ mb: 1 }}>
-            プレイリスト
-          </Typography>
-
           <DndContext
             sensors={sensors}
             collisionDetection={closestCenter}
