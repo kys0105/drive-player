@@ -10,6 +10,17 @@ import { useCacheSync } from '../hooks/useCacheSync';
 import { PlayerControls } from './PlayerControls';
 import { Playlist } from './Playlist';
 
+const YUMOSHIN_TITLES = [
+  'ghost mi#',
+  'noah',
+  'ほしを継ぐもの',
+  'flowers3',
+  'milkomeda',
+  'for Lib Isl',
+  '螺旋とは',
+  'Impulse',
+];
+
 export default function PlayerScreen() {
   const [tracks, setTracks] = useState<Track[]>([]);
   const [index, setIndex] = useState(0);
@@ -172,6 +183,25 @@ export default function PlayerScreen() {
     });
   };
 
+  const handleYumoshinOrder = useCallback(() => {
+    setTracks((prev) => {
+      const order = new Map(YUMOSHIN_TITLES.map((t, i) => [t, i]));
+      const sorted = [...prev].sort((a, b) => {
+        const ai = order.get(a.title);
+        const bi = order.get(b.title);
+        if (ai === undefined && bi === undefined) return 0;
+        if (ai === undefined) return 1;
+        if (bi === undefined) return -1;
+        return ai - bi;
+      });
+      const currentId = prev[index]?.id;
+      const newIdx = sorted.findIndex((t) => t.id === currentId);
+      setIndex(newIdx >= 0 ? newIdx : 0);
+      localStorage.setItem('trackOrder', JSON.stringify(sorted.map((t) => t.id)));
+      return sorted;
+    });
+  }, [index]);
+
   /* -------------------- 起動時の自動キャッシュ同期 -------------------- */
   const { loadingById } = useCacheSync(tracks);
   /* ------------------------------------------------------------------ */
@@ -223,6 +253,7 @@ export default function PlayerScreen() {
         handleDragEnd={handleDragEnd}
         loadingById={loadingById}
         maxWidth={CONTENT_MAX_W}
+        onYumoshinOrder={handleYumoshinOrder}
       />
     </Container>
   );
