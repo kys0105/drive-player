@@ -1,5 +1,5 @@
 // src/components/Playlist.tsx
-import { Card, CardContent, List } from '@mui/material';
+import { Card, CardContent, List, Button } from '@mui/material';
 import {
   DndContext,
   closestCenter,
@@ -21,9 +21,10 @@ type Props = {
   handleDragEnd: (e: DragEndEvent) => void;
   loadingById: Record<string, boolean>;
   maxWidth: number;
+  onYumoshinOrder: () => void;
 };
 
-export function Playlist({ tracks, index, setIndex, handleDragEnd, loadingById, maxWidth }: Props) {
+export function Playlist({ tracks, index, setIndex, handleDragEnd, loadingById, maxWidth, onYumoshinOrder }: Props) {
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
@@ -32,7 +33,22 @@ export function Playlist({ tracks, index, setIndex, handleDragEnd, loadingById, 
 
   return (
     <Card sx={{ width: '100%', maxWidth }}>
-      <CardContent>
+      <CardContent sx={{ position: 'relative' }}>
+        <Button
+          onClick={onYumoshinOrder}
+          size="small"
+          variant="outlined"
+          sx={{
+            position: 'absolute',
+            top: 4,
+            right: 4,
+            fontSize: '0.6rem',
+            minWidth: 0,
+            p: '2px 4px',
+          }}
+        >
+          ゆもしんが考えた曲順
+        </Button>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={tracks.map((x) => x.id)} strategy={verticalListSortingStrategy}>
             <List>
