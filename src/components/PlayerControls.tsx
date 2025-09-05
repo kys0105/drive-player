@@ -1,5 +1,16 @@
 // src/components/PlayerControls.tsx
-import { Card, CardContent, Stack, Avatar, Box, Typography, IconButton, Tooltip, Slider } from '@mui/material';
+import {
+  Card,
+  CardContent,
+  Stack,
+  Avatar,
+  Box,
+  Typography,
+  IconButton,
+  Tooltip,
+  Slider,
+  CircularProgress,
+} from '@mui/material';
 import { PlayArrow, Pause, SkipNext, SkipPrevious } from '@mui/icons-material';
 import type { Track } from '../types';
 import type { MutableRefObject, RefObject } from 'react';
@@ -98,8 +109,17 @@ export function PlayerControls({
           <Typography variant="body2" sx={{ ml: 1, width: 56, textAlign: 'right' }}>
             {fmt(current)}
           </Typography>
-          <Typography variant="body2" sx={{ width: 56, textAlign: 'left' }}>
-            {fmt(duration)}
+          <Typography
+            variant="body2"
+            sx={{
+              width: 56,
+              textAlign: 'left',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'flex-start',
+            }}
+          >
+            {src && duration === 0 ? <CircularProgress size={16} /> : fmt(duration)}
           </Typography>
         </Stack>
 

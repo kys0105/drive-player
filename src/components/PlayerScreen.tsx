@@ -139,6 +139,7 @@ export default function PlayerScreen() {
       // 直前にユーザー操作があったら、canplay で自動再生
       wantAutoPlayRef.current = interactedRef.current;
     }
+    setDuration(0);
     setCurrent(0);
   }, [src]);
 
