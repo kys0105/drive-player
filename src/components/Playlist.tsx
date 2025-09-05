@@ -1,5 +1,5 @@
 // src/components/Playlist.tsx
-import { Card, CardContent, List, Button } from '@mui/material';
+import { Card, CardContent, CardHeader, List, Button, Box } from '@mui/material';
 import {
   DndContext,
   closestCenter,
@@ -24,7 +24,15 @@ type Props = {
   onYumoshinOrder: () => void;
 };
 
-export function Playlist({ tracks, index, setIndex, handleDragEnd, loadingById, maxWidth, onYumoshinOrder }: Props) {
+export function Playlist({
+  tracks,
+  index,
+  setIndex,
+  handleDragEnd,
+  loadingById,
+  maxWidth,
+  onYumoshinOrder,
+}: Props) {
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
@@ -33,25 +41,25 @@ export function Playlist({ tracks, index, setIndex, handleDragEnd, loadingById, 
 
   return (
     <Card sx={{ width: '100%', maxWidth }}>
-      <CardContent sx={{ position: 'relative' }}>
-        <Button
-          onClick={onYumoshinOrder}
-          size="small"
-          variant="outlined"
-          sx={{
-            position: 'absolute',
-            top: 4,
-            right: 4,
-            fontSize: '0.6rem',
-            minWidth: 0,
-            p: '2px 4px',
-          }}
-        >
-          ゆもしんが考えた曲順
-        </Button>
+      <CardHeader
+        // タイトルを出さないなら空Boxで高さだけ確保
+        title={<Box />}
+        action={
+          <Button
+            onClick={onYumoshinOrder}
+            size="small"
+            variant="outlined"
+            sx={{ fontSize: '0.6rem', minWidth: 0, px: 1, py: 0.5, mr: 1 }}
+          >
+            ゆもしんが考えた曲順になるボタン
+          </Button>
+        }
+        sx={{ pb: 0 }} // ヘッダー下の余白を少し詰める
+      />
+      <CardContent>
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={tracks.map((x) => x.id)} strategy={verticalListSortingStrategy}>
-            <List>
+            <List sx={{ pt: 0 }}>
               {tracks.map((x, i) => (
                 <SortableTrackRow
                   key={x.id}
