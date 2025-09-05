@@ -37,7 +37,19 @@ export default function PlayerScreen() {
         return;
       }
       const d = await r.json();
-      setTracks(d.tracks ?? []);
+      const fetched = d.tracks ?? [];
+      const stored = localStorage.getItem('trackOrder');
+      const order: string[] = stored ? JSON.parse(stored) : [];
+      const sorted = [...fetched].sort((a, b) => {
+        const ai = order.indexOf(a.id);
+        const bi = order.indexOf(b.id);
+        if (ai === -1 && bi === -1) return 0;
+        if (ai === -1) return 1;
+        if (bi === -1) return -1;
+        return ai - bi;
+      });
+      setTracks(sorted);
+      localStorage.setItem('trackOrder', JSON.stringify(sorted.map((t) => t.id)));
     })();
   }, []);
 
@@ -145,7 +157,11 @@ export default function PlayerScreen() {
     const newIdx = tracks.findIndex((x) => x.id === over.id);
     if (oldIdx < 0 || newIdx < 0) return;
 
-    setTracks((prev) => arrayMove(prev, oldIdx, newIdx));
+    setTracks((prev) => {
+      const arr = arrayMove(prev, oldIdx, newIdx);
+      localStorage.setItem('trackOrder', JSON.stringify(arr.map((t) => t.id)));
+      return arr;
+    });
     // 再生中インデックスも調整
     setIndex((idx) => {
       if (idx === oldIdx) return newIdx;
