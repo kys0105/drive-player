@@ -13,7 +13,7 @@ export async function loadFunction(name) {
     write: false,
     platform: 'node',
     format: 'esm',
-    target: 'node22',
+    target: 'node24',
     plugins: [
       {
         name: 'mock-google-drive',

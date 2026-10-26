@@ -4,7 +4,7 @@ Google ドライブ上の音声ファイルを再生する React + TypeScript + 
 
 ## 必要なもの
 
-- Node.js 22.23.4 以上の 22 系（`.node-version` / `.nvmrc` 参照）
+- Node.js 24.22.1 以上の 24 系（`.node-version` / `.nvmrc` 参照）
 - npm
 
 ## 環境設定
@@ -80,9 +80,13 @@ Google ドライブ上の音声ファイルを再生する React + TypeScript + 
 
 デプロイ前に、Netlify側にも `APP_PASSWORD_HASH`、`SESSION_SECRET`、`FOLDER_ID`、サービスアカウントの環境変数を設定してください。スコープを選べるプランではFunctionsスコープに限定します。スコープ指定に対応しないプランでは標準スコープを使い、`VITE_`接頭辞を付けず、フロントエンドのソースから参照しないでください。値をソースやビルド成果物へ埋め込まないでください。未設定時は認証APIが503となり、Driveへのアクセスを拒否します。
 
-`netlify.toml` はビルド用Node.jsを22.23.4に指定します。Functionsの実行Node.jsはNetlify/AWSが管理するため、本番側のパッチ適用状況を別途確認してください。既存の `AWS_LAMBDA_JS_RUNTIME` 設定がある場合は、その上書き内容も確認します。[Netlifyの実行環境設定](https://docs.netlify.com/build/functions/configuration/#nodejs-version-for-runtime)
+`netlify.toml` はビルド用Node.jsを24.22.1に指定します。Functionsの実行環境も24系へ統一するため、Netlifyの環境変数 `AWS_LAMBDA_JS_RUNTIME` を `nodejs24.x` に設定し、再デプロイしてください。この変数は `netlify.toml` では設定できません。FunctionsのパッチバージョンはNetlify/AWSが管理するため、本番側のパッチ適用状況は別途確認します。[Netlifyの実行環境設定](https://docs.netlify.com/build/functions/configuration/#nodejs-version-for-runtime)
+
+2026年10月26日の本番実測は **24.21.0** でした。ビルド・検証用24.22.1とは異なり、10月21日のNode.jsセキュリティ修正が本番へ適用済みかは事業者確認が残ります。[対応状況](docs/SECURITY-STATUS.md)を参照してください。
 
 ## 認証と音声キャッシュ
+
+本番サイトでは、旧版の無認証APIがデプロイ固定URLに残ることを防ぐため、Netlify Firewallでunpublished deploysを遮断しています。デプロイ履歴は保持します。プレビュー確認が必要な場合は、管理者のIPだけを許可するルールと、検証用の認証設定を用意してください。published側はアプリの認証で制御します。
 
 - パスワードはサーバーで検証します。ログイン状態は署名付きのHttpOnly Cookieに最大30日間保存し、本番ではHTTPS専用・SameSite=Strictです。HTTP開発はlocalhostのみに対応します。
 - `list` と `stream` はリクエストごとに認証します。`stream` は `FOLDER_ID` 直下の、削除されていない `audio/mpeg` ファイルだけ取得します。
