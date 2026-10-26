@@ -1,12 +1,13 @@
 // src/components/PlayerScreen.tsx
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { Container } from '@mui/material';
+import { Alert, Button, Container } from '@mui/material';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 
 import type { Track } from '../types';
 import { buildStreamUrl } from '../utils/cache';
 import { useCacheSync } from '../hooks/useCacheSync';
+import { getSession } from '../utils/session';
 import { PlayerControls } from './PlayerControls';
 import { Playlist } from './Playlist';
 
@@ -21,14 +22,22 @@ const YUMOSHIN_TITLES = [
   'Impulse',
 ];
 
-export default function PlayerScreen() {
+type Props = {
+  cacheScope: string;
+  onSessionExpired: () => void;
+  onLogout: () => void;
+};
+
+export default function PlayerScreen({ cacheScope, onSessionExpired, onLogout }: Props) {
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [index, setIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [duration, setDuration] = useState(0);
   const [current, setCurrent] = useState(0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const sessionCheckRef = useRef<AbortController | null>(null);
   const wantAutoPlayRef = useRef(false);
 
   // 即時反映用の「操作済み」フラグ
@@ -41,34 +50,100 @@ export default function PlayerScreen() {
 
   // 起動時：楽曲リスト取得
   useEffect(() => {
+    const controller = new AbortController();
     (async () => {
-      const r = await fetch('/.netlify/functions/list');
-      if (!r.ok) {
-        console.error('list failed', r.status, await r.text());
-        return;
+      try {
+        const r = await fetch('/.netlify/functions/list', {
+          credentials: 'same-origin',
+          cache: 'no-store',
+          signal: controller.signal,
+        });
+        if (controller.signal.aborted) return;
+        if (r.status === 401) {
+          onSessionExpired();
+          return;
+        }
+        if (!r.ok) throw new Error('List request failed');
+        const d = await r.json();
+        if (controller.signal.aborted) return;
+        const fetched: Track[] = d.tracks ?? [];
+        let order: string[] = [];
+        try {
+          const stored: unknown = JSON.parse(localStorage.getItem('trackOrder') || '[]');
+          if (Array.isArray(stored))
+            order = stored.filter((id): id is string => typeof id === 'string');
+        } catch {
+          /* A missing or invalid saved order uses the server order. */
+        }
+        const sorted = [...fetched].sort((a, b) => {
+          const ai = order.indexOf(a.id);
+          const bi = order.indexOf(b.id);
+          if (ai === -1 && bi === -1) return 0;
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+          return ai - bi;
+        });
+        setTracks(sorted);
+        localStorage.setItem('trackOrder', JSON.stringify(sorted.map((t) => t.id)));
+      } catch {
+        if (!controller.signal.aborted)
+          setListError(
+            '楽曲一覧を取得できません。通信状態を確認してページを再読み込みしてください。'
+          );
       }
-      const d = await r.json();
-      const fetched = d.tracks ?? [];
-      const stored = localStorage.getItem('trackOrder');
-      const order: string[] = stored ? JSON.parse(stored) : [];
-      const sorted = [...fetched].sort((a, b) => {
-        const ai = order.indexOf(a.id);
-        const bi = order.indexOf(b.id);
-        if (ai === -1 && bi === -1) return 0;
-        if (ai === -1) return 1;
-        if (bi === -1) return -1;
-        return ai - bi;
-      });
-      setTracks(sorted);
-      localStorage.setItem('trackOrder', JSON.stringify(sorted.map((t) => t.id)));
     })();
+    return () => controller.abort();
+  }, [onSessionExpired]);
+
+  useEffect(() => {
+    return () => {
+      sessionCheckRef.current?.abort();
+      if ('mediaSession' in navigator) {
+        navigator.mediaSession.metadata = null;
+        navigator.mediaSession.setActionHandler?.('play', null);
+        navigator.mediaSession.setActionHandler?.('pause', null);
+        navigator.mediaSession.setActionHandler?.('previoustrack', null);
+        navigator.mediaSession.setActionHandler?.('nexttrack', null);
+      }
+    };
   }, []);
+
+  const handleAudioError = useCallback(async () => {
+    sessionCheckRef.current?.abort();
+    const controller = new AbortController();
+    sessionCheckRef.current = controller;
+    try {
+      const session = await getSession(controller.signal);
+      if (!controller.signal.aborted && !session) onSessionExpired();
+    } catch {
+      if (!controller.signal.aborted)
+        setListError('音声を取得できません。通信状態を確認してください。');
+    }
+  }, [onSessionExpired]);
 
   // 再生URL（?v= を含めてキャッシュ自動更新）
   const src = useMemo(
     () => (tracks[index] ? buildStreamUrl(tracks[index]) : undefined),
     [tracks, index]
   );
+  const hasAudio = Boolean(src);
+
+  // Stop audio already downloaded by the browser when the player is removed.
+  useEffect(() => {
+    const audio = audioRef.current;
+    return () => {
+      if (audio) {
+        audio.pause();
+        audio.removeAttribute('src');
+        audio.load();
+      }
+    };
+  }, [hasAudio]);
+
+  const handleLogout = () => {
+    audioRef.current?.pause();
+    onLogout();
+  };
 
   const canPlayThis = useMemo(() => {
     const t = tracks[index];
@@ -203,7 +278,7 @@ export default function PlayerScreen() {
   }, [index]);
 
   /* -------------------- 起動時の自動キャッシュ同期 -------------------- */
-  const { loadingById } = useCacheSync(tracks);
+  const { loadingById } = useCacheSync(tracks, cacheScope, onSessionExpired);
   /* ------------------------------------------------------------------ */
 
   const t = tracks[index];
@@ -222,6 +297,14 @@ export default function PlayerScreen() {
       onClick={markInteracted}
       onTouchStart={markInteracted}
     >
+      <Button onClick={handleLogout} sx={{ alignSelf: 'flex-end', mb: 1 }}>
+        ログアウト
+      </Button>
+      {listError && (
+        <Alert severity="error" sx={{ mb: 2, width: '100%' }}>
+          {listError}
+        </Alert>
+      )}
       <PlayerControls
         track={t}
         index={index}
@@ -238,6 +321,7 @@ export default function PlayerScreen() {
         onSeek={onSeek}
         onLoaded={onLoaded}
         onTime={onTime}
+        onAudioError={handleAudioError}
         audioRef={audioRef}
         wantAutoPlayRef={wantAutoPlayRef}
         interactedRef={interactedRef}

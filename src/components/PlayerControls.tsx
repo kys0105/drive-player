@@ -31,6 +31,7 @@ type Props = {
   onSeek: (_: Event, v: number | number[]) => void;
   onLoaded: () => void;
   onTime: () => void;
+  onAudioError: () => void;
   audioRef: RefObject<HTMLAudioElement | null>;
   wantAutoPlayRef: MutableRefObject<boolean>;
   interactedRef: MutableRefObject<boolean>;
@@ -54,6 +55,7 @@ export function PlayerControls({
   onSeek,
   onLoaded,
   onTime,
+  onAudioError,
   audioRef,
   wantAutoPlayRef,
   interactedRef,
@@ -164,6 +166,7 @@ export function PlayerControls({
                 readyState: el.readyState,
                 src: el.currentSrc,
               });
+              onAudioError();
             }}
           />
         )}

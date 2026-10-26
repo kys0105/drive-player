@@ -6,8 +6,13 @@ type ServiceAccountJSON = {
   private_key: string;
 };
 
+export function getFolderId(): string | null {
+  const id = process.env.FOLDER_ID ?? '';
+  return /^[A-Za-z0-9_-]{1,200}$/.test(id) ? id : null;
+}
+
 export function getDrive() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 ?? process.env.GOOGLE_SERVICE_ACCOUNT ?? '';
+  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 || process.env.GOOGLE_SERVICE_ACCOUNT || '';
 
   if (!raw) throw new Error('missing GOOGLE_SERVICE_ACCOUNT(_BASE64)');
 
