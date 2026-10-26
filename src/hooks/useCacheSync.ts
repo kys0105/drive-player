@@ -1,47 +1,29 @@
 import { useEffect, useState } from 'react';
 import type { Track } from '../types';
-import {
-  buildStreamUrl,
-  loadManifest,
-  saveManifest,
-  hasCached,
-  cleanupCache,
-  CACHE_NAME,
-  type Manifest,
-} from '../utils/cache';
+import { buildStreamUrl, hasCached, cleanupCache } from '../utils/cache';
 
-export function useCacheSync(tracks: Track[]) {
+export function useCacheSync(tracks: Track[], cacheScope: string, onSessionExpired: () => void) {
   const [loadingById, setLoadingById] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (!tracks.length || !('caches' in window)) return;
 
-    let aborted = false;
+    const controller = new AbortController();
 
     (async () => {
-      const oldManifest = loadManifest();
-      const newManifest: Manifest = {};
       const validAbsUrls: string[] = [];
-      const toFetch: { id: string; url: string; reason: 'missing' | 'updated' }[] = [];
+      const toFetch: { id: string; url: string }[] = [];
 
       for (const t of tracks) {
+        if (controller.signal.aborted) return;
         const url = buildStreamUrl(t);
         const absUrl = new URL(url, location.origin).href;
         validAbsUrls.push(absUrl);
 
-        const newVer = t.ver ?? '';
-        newManifest[t.id] = newVer;
-
-        const oldVer = oldManifest[t.id];
-        if (!oldVer) {
-          if (!(await hasCached(url))) {
-            toFetch.push({ id: t.id, url, reason: 'missing' });
-          }
-        } else if (oldVer !== newVer) {
-          toFetch.push({ id: t.id, url, reason: 'updated' });
-        }
+        if (!(await hasCached(url, cacheScope))) toFetch.push({ id: t.id, url });
       }
 
+      if (controller.signal.aborted) return;
       if (toFetch.length) {
         setLoadingById((prev) => {
           const next = { ...prev };
@@ -50,34 +32,36 @@ export function useCacheSync(tracks: Track[]) {
         });
       }
 
-      const cache = await caches.open(CACHE_NAME);
       for (const f of toFetch) {
-        if (aborted) break;
+        if (controller.signal.aborted) return;
         try {
-          await fetch(f.url, { cache: 'reload' });
-          if (f.reason === 'updated') {
-            const oldVer = oldManifest[f.id];
-            if (oldVer) {
-              const oldUrl = `/.netlify/functions/stream/${f.id}?v=${encodeURIComponent(oldVer)}`;
-              await cache.delete(new Request(oldUrl));
-            }
+          const response = await fetch(f.url, {
+            cache: 'no-store',
+            credentials: 'same-origin',
+            signal: controller.signal,
+          });
+          if (controller.signal.aborted) return;
+          if (response.status === 401) {
+            onSessionExpired();
+            return;
           }
+          if (!response.ok) throw new Error(`Prefetch returned ${response.status}`);
+          // Consume the body even if a service worker has not taken control yet.
+          await response.arrayBuffer();
         } catch (e) {
-          console.warn('prefetch failed:', f.id, e);
+          if (!controller.signal.aborted) console.warn('prefetch failed:', f.id, e);
         } finally {
-          setLoadingById((prev) => ({ ...prev, [f.id]: false }));
+          if (!controller.signal.aborted) setLoadingById((prev) => ({ ...prev, [f.id]: false }));
         }
-        await new Promise((r) => setTimeout(r, 150));
       }
 
-      await cleanupCache(validAbsUrls);
-      saveManifest(newManifest);
-    })();
+      if (!controller.signal.aborted) await cleanupCache(validAbsUrls, cacheScope);
+    })().catch((error) => {
+      if (!controller.signal.aborted) console.warn('Audio cache sync failed:', error);
+    });
 
-    return () => {
-      aborted = true;
-    };
-  }, [tracks]);
+    return () => controller.abort();
+  }, [tracks, cacheScope, onSessionExpired]);
 
   return { loadingById };
 }

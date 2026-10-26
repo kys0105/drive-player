@@ -1,91 +1,95 @@
-// netlify/functions/stream.ts
-import { getDrive } from './_drive';
-import type { OAuth2Client } from 'google-auth-library';
+import { requireSession } from './_auth.ts';
+import { getDrive, getFolderId } from './_drive.ts';
+import { methodNotAllowed, privateResponse } from './_http.ts';
 
-function guessAudioMime(name: string, driveMime?: string): string {
-  const n = name.toLowerCase();
-  if (n.endsWith('.mp3')) return 'audio/mpeg';
-  if (driveMime === 'audio/mpeg') return driveMime;
-  return 'audio/mpeg';
+function validRange(range: string): boolean {
+  const parts = /^bytes=(\d{0,16})-(\d{0,16})$/.exec(range);
+  if (!parts || (!parts[1] && !parts[2])) return false;
+  const start = Number(parts[1]);
+  const end = Number(parts[2]);
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end)) return false;
+  return !parts[1] ? end > 0 : !parts[2] || end >= start;
 }
 
-export default async (req: Request) => {
+async function handleStream(req: Request): Promise<Response> {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return methodNotAllowed('GET, HEAD');
+  const auth = requireSession(req);
+  if (auth instanceof Response) return auth;
+  const folderId = getFolderId();
+  if (!folderId) return privateResponse('Service unavailable', 503);
+  const fileId = new URL(req.url).pathname.split('/').pop() ?? '';
+  if (!/^[A-Za-z0-9_-]{1,200}$/.test(fileId)) return privateResponse('Invalid file ID', 400);
+  const range = req.headers.get('range');
+  if (range && !validRange(range)) {
+    return privateResponse('Unsupported range', 416);
+  }
+
   try {
-    const urlObj = new URL(req.url);
-    const fileId = urlObj.pathname.split('/').pop();
-    const ver = urlObj.searchParams.get('v') || ''; // ★ バージョン
-
-    if (!fileId) return new Response('fileId required', { status: 400 });
-
     const drive = getDrive();
     const meta = await drive.files.get({
       fileId,
-      fields: 'id,name,mimeType,size',
+      fields: 'id,mimeType,size,parents,trashed',
       alt: 'json',
     });
-    const name = meta.data.name ?? 'audio';
-    const mime = guessAudioMime(name, meta.data.mimeType ?? '');
-    const sizeNum = Number(meta.data.size ?? 0);
-    const hasSize = Number.isFinite(sizeNum) && sizeNum > 0;
+    if (
+      meta.data.trashed !== false ||
+      meta.data.mimeType !== 'audio/mpeg' ||
+      !meta.data.parents?.includes(folderId)
+    ) {
+      return privateResponse('Not found', 404);
+    }
 
-    // OAuth2 トークン取り出し
-    const auth = (drive.context._options?.auth ?? null) as OAuth2Client | null;
-    const token = auth ? (await auth.getAccessToken()).token : null;
-    if (!token) return new Response('no access token', { status: 500 });
-
-    // Range 透過
-    const range = req.headers.get('range') || undefined;
-    const upstream = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
-
-    const shouldRetry = (s: number) => [429, 500, 502, 503, 504].includes(s);
-    let res: Response | null = null;
-    for (let i = 0; i < 3; i++) {
+    const client = drive.context._options.auth;
+    if (!client || typeof client !== 'object' || !('getAccessToken' in client)) {
+      return privateResponse('Service unavailable', 503);
+    }
+    const access = await client.getAccessToken();
+    const token = typeof access === 'string' ? access : access?.token;
+    if (!token) return privateResponse('Service unavailable', 503);
+    const upstream = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+    let res: Response | undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
       res = await fetch(upstream, {
+        method: req.method,
         headers: {
           Authorization: `Bearer ${token}`,
-          ...(range && hasSize ? { Range: range } : {}),
+          'Accept-Encoding': 'identity',
+          ...(range ? { Range: range } : {}),
         },
+        redirect: 'error',
+        signal: AbortSignal.any([req.signal, AbortSignal.timeout(30_000)]),
       });
-      if (res.ok || res.status === 206) break;
-      if (!shouldRetry(res.status)) break;
-      await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+      if (![429, 500, 502, 503, 504].includes(res.status) || attempt === 2) break;
+      await res.body?.cancel();
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
     }
-    if (!res) return new Response('Upstream fetch failed', { status: 502 });
-    if (!res.ok && res.status !== 206) {
-      const txt = await res.text().catch(() => '');
-      return new Response(txt || 'Upstream error', { status: res.status });
+    if (!res) return privateResponse('Unable to load audio', 502);
+    if (res.status !== 200 && res.status !== 206) {
+      await res.body?.cancel();
+      return privateResponse(
+        req.method === 'HEAD' ? null : 'Unable to load audio',
+        res.status === 416 ? 416 : 502
+      );
     }
-
-    // ヘッダ整形
-    const out = new Headers();
-    for (const k of [
-      'content-type',
-      'content-length',
-      'content-range',
-      'accept-ranges',
-      'etag',
-      'last-modified',
-      'cache-control',
-    ] as const) {
-      const v = res.headers.get(k);
-      if (v) out.set(k, v);
+    const headers = new Headers({ 'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'bytes' });
+    // fetch transparently decompresses bodies; do not forward an encoded Content-Length.
+    for (const name of ['content-range', 'etag', 'last-modified']) {
+      const value = res.headers.get(name);
+      if (value) headers.set(name, value);
     }
-    if (!out.has('content-type')) out.set('content-type', mime);
-    if (!out.has('accept-ranges')) out.set('accept-ranges', 'bytes');
-
-    // ★ ここがポイント：v がある時だけ長期キャッシュ可能に
-    if (ver) {
-      out.set('cache-control', 'public, max-age=31536000, immutable');
-      out.set('Vary', 'Range'); // 念のため
-      // ETag は上流のままでOK。任意で x-cache-key を付与しても良い
-      out.set('x-cache-key', `${fileId}:${ver}`);
-    } else {
-      out.set('cache-control', 'no-store');
+    if (!res.headers.has('content-encoding')) {
+      const length = res.headers.get('content-length');
+      if (length) headers.set('content-length', length);
     }
-
-    return new Response(res.body, { status: res.status, headers: out });
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return new Response(msg || 'stream error', { status: 500 });
+    return privateResponse(req.method === 'HEAD' ? null : res.body, res.status, headers);
+  } catch {
+    return privateResponse(req.method === 'HEAD' ? null : 'Unable to load audio', 502);
   }
-};
+}
+
+export default async function stream(req: Request): Promise<Response> {
+  const response = await handleStream(req);
+  if (req.method !== 'HEAD') return response;
+  await response.body?.cancel();
+  return new Response(null, { status: response.status, headers: response.headers });
+}

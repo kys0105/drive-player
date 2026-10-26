@@ -1,13 +1,6 @@
-// netlify/functions/list.ts
-import type { Handler } from '@netlify/functions';
-import { getDrive } from './_drive';
-
-function guessAudioMimeByName(name: string, driveMime?: string): string {
-  const n = name.toLowerCase();
-  if (n.endsWith('.mp3')) return 'audio/mpeg';
-  if (driveMime === 'audio/mpeg') return driveMime;
-  return 'audio/mpeg';
-}
+import { requireSession } from './_auth.ts';
+import { getDrive, getFolderId } from './_drive.ts';
+import { jsonResponse, methodNotAllowed, privateResponse } from './_http.ts';
 
 function formatTitle(name: string): string {
   const underscoreIndex = name.indexOf('_');
@@ -16,55 +9,42 @@ function formatTitle(name: string): string {
   return dotIndex >= 0 ? name.slice(0, dotIndex) : name;
 }
 
-function errMsg(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
+export default async function list(req: Request): Promise<Response> {
+  if (req.method !== 'GET') return methodNotAllowed('GET');
+  const auth = requireSession(req);
+  if (auth instanceof Response) return auth;
+  const folderId = getFolderId();
+  if (!folderId) return privateResponse('Service unavailable', 503);
 
-export const handler: Handler = async () => {
   try {
-    const folderId = process.env.FOLDER_ID;
-    if (!folderId) return { statusCode: 500, body: 'FOLDER_ID is not set' };
-
     const drive = getDrive();
-
-    const q = [`'${folderId}' in parents`, 'trashed=false', "mimeType='audio/mpeg'"].join(' and ');
-
-    const res = await drive.files.list({
-      q,
-      // ★ md5Checksum を追加
-      fields: 'files(id,name,mimeType,thumbnailLink,modifiedTime,md5Checksum,size),nextPageToken',
-      orderBy: 'name_natural',
-      pageSize: 1000,
-    });
-
-    const files = res.data.files ?? [];
-    const tracks = files.map((f) => {
-      const name = f.name ?? 'audio';
-      const driveMime = f.mimeType ?? '';
-      const guessed = guessAudioMimeByName(name, driveMime);
-      const title = formatTitle(name);
-
-      // ★ ver は md5Checksum 優先、なければ modifiedTime
-      const ver = f.md5Checksum ?? f.modifiedTime ?? '';
-
-      return {
-        id: f.id!,
-        title,
-        mimeType: guessed,
-        artwork: f.thumbnailLink ?? undefined,
-        artist: '',
-        size: f.size ? Number(f.size) : undefined,
-        modifiedTime: f.modifiedTime ?? undefined,
-        ver, // ★ここがポイント
-      };
-    });
-
-    return {
-      statusCode: 200,
-      headers: { 'Content-Type': 'application/json; charset=utf-8' },
-      body: JSON.stringify({ tracks }),
-    };
-  } catch (e: unknown) {
-    return { statusCode: 500, body: errMsg(e) };
+    const tracks = [];
+    let pageToken: string | undefined;
+    do {
+      const res = await drive.files.list({
+        q: `'${folderId}' in parents and trashed=false and mimeType='audio/mpeg'`,
+        fields: 'files(id,name,mimeType,thumbnailLink,modifiedTime,md5Checksum,size),nextPageToken',
+        orderBy: 'name_natural',
+        pageSize: 1000,
+        pageToken,
+      });
+      for (const file of res.data.files ?? []) {
+        if (!file.id || file.mimeType !== 'audio/mpeg') continue;
+        tracks.push({
+          id: file.id,
+          title: formatTitle(file.name ?? 'audio'),
+          mimeType: 'audio/mpeg',
+          artwork: file.thumbnailLink ?? undefined,
+          artist: '',
+          size: file.size ? Number(file.size) : undefined,
+          modifiedTime: file.modifiedTime ?? undefined,
+          ver: file.md5Checksum ?? file.modifiedTime ?? '',
+        });
+      }
+      pageToken = res.data.nextPageToken ?? undefined;
+    } while (pageToken);
+    return jsonResponse({ tracks });
+  } catch {
+    return privateResponse('Unable to load tracks', 502);
   }
-};
+}

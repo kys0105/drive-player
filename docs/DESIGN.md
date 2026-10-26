@@ -12,12 +12,12 @@
 - **キャッシュ**: Service Worker と Cache Storage
 
 ## 認証
-- 固定パスワードによる簡易認証を行います。
-- 認証が成功すると `localStorage` にフラグを保存し、次回以降は自動ログインします。
+- パスワードはサーバー上のscryptハッシュと照合し、署名付きHttpOnly Cookieで最大30日間ログイン状態を維持します。
+- 起動時にsession APIで認証を確認し、list/streamも毎回認証します。パスワードハッシュ・署名鍵・対象フォルダを変更すると既存セッションは失効します。
 
 ## 画面構成
 ### 1. ログイン画面
-- パスワードを入力するフォームを提供し、固定値と一致する場合のみログインを許可します。
+- パスワードを入力するフォームを提供し、`/api/login`でサーバーが検証します。Netlify側でログイン試行回数を制限します。
 
 ### 2. プレイヤー画面
 - トラック情報の取得、再生、プレイリスト表示を行います。
@@ -33,9 +33,10 @@
 
 ## キャッシュ戦略と API 通信
 - ログイン完了後は Netlify Function `list` に必ず通信し、最新の曲一覧とバージョン情報を取得します。
-- `useCacheSync` フックが Cache Storage と取得したリストを比較し、未キャッシュの音声だけを `stream` から順次取得して保存します。
-- 再生時は Service Worker が Cache Storage を参照し、音声が存在すれば API 通信を行いません。存在しない場合やバージョンが異なる場合のみ `stream` へ通信して音声を取得し、キャッシュを更新します。
-- Service Worker は `/.netlify/functions/stream/` 以下のリクエストを cache-first で処理し、クエリ `?v=` により音声ファイルのバージョンを管理して更新時に古いキャッシュを削除します。
+- `useCacheSync` フックがセッション別のCache Storageと取得リストを比較し、未キャッシュの音声だけを `stream` から順次取得します。
+- Service Workerは毎回session APIへ問い合わせ、認証が有効な場合だけセッション別キャッシュを返します。オフライン時にはキャッシュを返しません。
+- `/.netlify/functions/stream/` の同一オリジンGETリクエストのうち、Rangeなし・`?v=`付き・200レスポンスだけ保存します。RangeとHEADは認証後にネットワークへ送ります。
+- ログアウト時には音声を停止し、進行中の書き込みを無効化してから音声キャッシュを削除します。
 
 ## Netlify Functions
 ### list
@@ -43,11 +44,13 @@
 
 ### stream
 - Google Drive API 経由でファイルを取得し、Range リクエストに対応したままクライアントへ転送します。
-- バージョン情報が存在する場合は `Cache-Control: public, max-age=31536000, immutable` を付与します。
+- 対象フォルダの親ID・音声MIME・削除状態を検証してから転送します。すべてのAPIレスポンスを `Cache-Control: private, no-store` とします。
 
 ## 環境変数
 - `GOOGLE_SERVICE_ACCOUNT` または `GOOGLE_SERVICE_ACCOUNT_BASE64`: サービスアカウントの認証情報
 - `FOLDER_ID`: 再生対象となる Google Drive フォルダ ID
+- `APP_PASSWORD_HASH`: scrypt形式のパスワードハッシュ（`npm run auth:setup`で生成）
+- `SESSION_SECRET`: セッション署名鍵（同コマンドで生成）
 
 ## その他
 - Service Worker 登録時に既存キャッシュを整理し、Storage API の永続化も要求します。
