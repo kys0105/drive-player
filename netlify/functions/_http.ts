@@ -7,6 +7,7 @@ export function privateResponse(
   headers.set('Cache-Control', 'private, no-store');
   headers.set('CDN-Cache-Control', 'no-store');
   headers.set('Netlify-CDN-Cache-Control', 'no-store');
+  headers.set('Vercel-CDN-Cache-Control', 'no-store');
   headers.set('Vary', 'Cookie, Origin, Range');
   headers.set('X-Content-Type-Options', 'nosniff');
   headers.set('Cross-Origin-Resource-Policy', 'same-origin');

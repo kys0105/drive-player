@@ -1,0 +1,15 @@
+design
+docs
+tests
+.netlify
+.migration
+.claude
+.env*
+*.local
+CODEX_*.md
+CLAUDE_*.md
+node_modules
+dist
+.git
+netlify/redirect
+netlify/disabled-functions

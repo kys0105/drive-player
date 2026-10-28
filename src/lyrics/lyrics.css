@@ -1,0 +1,33 @@
+.lyrics-view { position:relative;display:flex;flex:1 1 auto;min-height:0;width:100%;height:100%;overflow:hidden;color:#fff; }
+.lyrics-sr { position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0; }
+.lyrics-caption { position:absolute;z-index:2;top:12px;left:24px;right:24px;margin:0;color:#a8b3c4;font-size:12px;line-height:1.5;font-weight:500;text-align:center;pointer-events:none; }
+.lyrics-scroll { flex:1 1 auto;min-height:0;height:100%;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;-webkit-overflow-scrolling:touch; }
+.lyrics-scroll::-webkit-scrollbar { display:none; }
+.lyrics-lines { display:flex;flex-direction:column;gap:30px;padding:110px 28px 200px; }
+.lyrics-line { display:block;flex:0 0 auto;width:100%;min-height:44px;margin:0;padding:0;border:0;border-radius:3px;background:transparent;color:#8996a9;font-family:inherit;font-size:24px;line-height:1.48;font-weight:700;letter-spacing:-.035em;text-align:left;overflow-wrap:anywhere;transition:color 200ms ease;-webkit-tap-highlight-color:transparent; }
+button.lyrics-line { cursor:pointer; }
+button.lyrics-line:hover,button.lyrics-line:focus-visible { color:#e3e8ef; }
+button.lyrics-line:focus-visible,.lyrics-follow:focus-visible,.lyrics-add:focus-visible { outline:2px solid #fff;outline-offset:5px; }
+.lyrics-line--active,button.lyrics-line--active:hover { color:#fff; }
+.lyrics-line--plain { color:#d9e0e9;font-weight:650; }
+.lyrics-follow { position:absolute;z-index:3;left:50%;bottom:10px;transform:translateX(-50%);min-height:40px;padding:8px 15px;border:1px solid rgba(255,255,255,.26);border-radius:20px;background:#24344a;color:#fff;font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;white-space:nowrap;cursor:pointer; }
+.lyrics-empty { display:flex;flex:1 1 auto;flex-direction:column;align-items:center;justify-content:center;min-height:0;padding:32px 28px;text-align:center;color:#fff; }
+.lyrics-empty h2 { margin:0 0 12px;font-size:19px;line-height:1.5;font-weight:650;letter-spacing:-.025em; }
+.lyrics-empty p { margin:0 0 24px;color:#b0bbcb;font-size:14px;line-height:1.7; }
+.lyrics-add { min-height:44px;padding:12px 24px;border:0;border-radius:22px;background:#fff;color:#142238;font-family:inherit;font-size:14px;font-weight:650;line-height:1.4;cursor:pointer; }
+.lyrics-editor { display:flex;flex-direction:column;gap:14px;width:100%;max-height:min(80dvh,720px);min-height:0;padding:4px 0 8px;color:#18191c; }
+.lyrics-editor-heading { display:flex;align-items:flex-start;justify-content:space-between;gap:12px; }
+.lyrics-editor-heading h2 { margin:0 0 5px;font-size:21px;line-height:1.3;letter-spacing:-.025em; }
+.lyrics-editor-heading p { margin:0;color:#666b75;font-size:14px;overflow-wrap:anywhere; }
+.lyrics-editor-close { flex:none;min-height:44px;border:0;padding:0 4px;background:transparent;color:#626874;font-size:14px;cursor:pointer; }
+.lyrics-editor-note { margin:0;color:#666b75;font-size:13px;line-height:1.65; }
+.lyrics-editor-file { min-height:46px;flex:none;border:0;border-radius:12px;padding:10px 14px;background:#f0f1f4;color:#333844;font-family:inherit;font-size:14px;font-weight:600;line-height:1.4;cursor:pointer; }
+.lyrics-editor-label { margin-bottom:-7px;color:#333844;font-size:13px;font-weight:600; }
+.lyrics-editor-text { display:block;flex:1 1 auto;width:100%;min-height:160px;max-height:40dvh;resize:vertical;border:1px solid #d9dce3;border-radius:12px;padding:12px;background:#fff;color:#18191c;font-family:inherit;font-size:16px;font-weight:400;line-height:1.65; }
+.lyrics-editor-text:focus-visible,.lyrics-editor button:focus-visible { outline:2px solid #ef3366;outline-offset:3px; }
+.lyrics-editor-error { margin:0;color:#b42340;font-size:13px;line-height:1.6; }
+.lyrics-editor-actions { display:flex;align-items:center;justify-content:flex-end;gap:12px;flex:none; }
+.lyrics-editor-remove { min-height:44px;padding:10px 4px;border:0;background:transparent;color:#b42340;font-size:14px;cursor:pointer; }
+.lyrics-editor-save { min-height:46px;min-width:118px;padding:11px 18px;border:0;border-radius:12px;background:#ed3566;color:#fff;font-size:14px;font-weight:650;cursor:pointer; }
+.lyrics-editor button:disabled { cursor:default;opacity:.55; }
+@media (prefers-reduced-motion:reduce) { .lyrics-line { transition:none; } }

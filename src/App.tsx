@@ -1,188 +1,138 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import PlayerScreen from './components/PlayerScreen';
 import LoginPage from './pages/LoginPage';
-import {
-  Alert,
-  Button,
-  Container,
-  CssBaseline,
-  Stack,
-  ThemeProvider,
-  createTheme,
-} from '@mui/material';
 import { clearPrivateAudioCache } from './utils/cache';
-import { getSession } from './utils/session';
+import { clearLocalSession, getSession, isLocallyLoggedOut, loadOfflineSession, OFFLINE_SESSION_KEY } from './utils/session';
 import type { AuthSession } from './utils/session';
-
-const theme = createTheme({
-  palette: {
-    mode: 'dark',
-    background: { default: '#242424', paper: '#3a3a3a' },
-    primary: { main: '#8fa2ff' },
-  },
-});
+import { clearStoredLyrics } from './lyrics';
 
 type AuthState =
   | { status: 'checking' | 'loggingOut' }
   | { status: 'anonymous'; message?: string }
   | { status: 'authenticated'; session: AuthSession }
-  | { status: 'error'; message: string; retry: 'session' | 'logout' };
+  | { status: 'error'; message: string };
+
+function initialState(): AuthState {
+  if (isLocallyLoggedOut()) return { status: 'anonymous' };
+  const cached = loadOfflineSession();
+  return cached ? { status: 'authenticated', session: cached } : { status: 'checking' };
+}
 
 export default function App() {
-  const [auth, setAuth] = useState<AuthState>({ status: 'checking' });
-  const [retryCount, setRetryCount] = useState(0);
-  const clearedScopesRef = useRef(new Set<string>());
+  const [auth, setAuth] = useState<AuthState>(initialState);
+  const authRef = useRef(auth);
+  authRef.current = auth;
+  const requestRef = useRef<AbortController | null>(null);
+  const epoch = useRef(0);
+  const loggingOutRef = useRef(false);
+
+  const invalidate = useCallback((message = 'ログインが無効になりました。もう一度ログインしてください。') => {
+    epoch.current++;
+    requestRef.current?.abort();
+    setAuth({ status: 'anonymous', message });
+    clearLocalSession();
+    void Promise.allSettled([clearPrivateAudioCache(), clearStoredLyrics()]);
+  }, []);
+
+  const revalidate = useCallback(async () => {
+    if (isLocallyLoggedOut()) return;
+    requestRef.current?.abort();
+    const request = new AbortController();
+    requestRef.current = request;
+    const expected = epoch.current;
+    const timeout = window.setTimeout(() => request.abort(), 8_000);
+    try {
+      const session = await getSession(request.signal);
+      if (request.signal.aborted || expected !== epoch.current) return;
+      if (!session) { invalidate(authRef.current.status === 'authenticated' ? undefined : ''); return; }
+      setAuth({ status: 'authenticated', session });
+    } catch {
+      if (requestRef.current !== request || expected !== epoch.current || isLocallyLoggedOut()) return;
+      const cached = loadOfflineSession();
+      if (cached) setAuth({ status: 'authenticated', session: cached });
+      else setAuth({ status: 'error', message: 'オンラインでログイン状態を確認してください。保存済み音源の利用許可は、最後の確認から30日間です。端末の日時も確認してください。' });
+    } finally { clearTimeout(timeout); }
+  }, [invalidate]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void getSession(controller.signal)
-      .then(async (session) => {
-        if (controller.signal.aborted) return;
-        if (!session) await clearPrivateAudioCache().catch(console.warn);
-        if (!controller.signal.aborted) {
-          setAuth(session ? { status: 'authenticated', session } : { status: 'anonymous' });
-        }
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setAuth({
-            status: 'error',
-            message: 'ログイン状態を確認できません。通信状態を確認して再試行してください。',
-            retry: 'session',
-          });
-        }
-      });
-    return () => controller.abort();
-  }, [retryCount]);
-
-  const cacheScope = auth.status === 'authenticated' ? auth.session.cacheScope : undefined;
-  const expiresAt = auth.status === 'authenticated' ? auth.session.expiresAt : undefined;
-
-  const handleSessionExpired = useCallback(() => {
-    if (!cacheScope || clearedScopesRef.current.has(cacheScope)) return;
-    clearedScopesRef.current.add(cacheScope);
-    setAuth((previous) =>
-      previous.status === 'authenticated' && previous.session.cacheScope === cacheScope
-        ? { status: 'checking' }
-        : previous
-    );
-    void clearPrivateAudioCache(cacheScope)
-      .catch(console.warn)
-      .then(() => {
-        setAuth((previous) =>
-          previous.status === 'checking'
-            ? {
-                status: 'anonymous',
-                message: 'ログインの有効期限が切れました。再度ログインしてください。',
-              }
-            : previous
-        );
-      });
-  }, [cacheScope]);
-
-  useEffect(() => {
-    if (!expiresAt) return;
-    let timeout: number;
-    const checkExpiry = () => {
-      const remaining = expiresAt * 1000 - Date.now();
-      if (remaining <= 0) handleSessionExpired();
-      else timeout = window.setTimeout(checkExpiry, Math.min(remaining, 2_147_483_647));
-    };
-    checkExpiry();
-    return () => clearTimeout(timeout);
-  }, [expiresAt, handleSessionExpired]);
-
-  useEffect(() => {
-    if (!cacheScope) return;
-    let controller: AbortController | undefined;
+    // An offline logout stays blocked until an explicit password login. A delayed
+    // logout request here could otherwise clear a Cookie issued by a new login.
+    if (!isLocallyLoggedOut()) void revalidate();
     const checkOnReturn = () => {
-      if (document.visibilityState === 'hidden') return;
-      controller?.abort();
-      const request = new AbortController();
-      controller = request;
-      void getSession(request.signal)
-        .then((session) => {
-          if (!request.signal.aborted && (!session || session.cacheScope !== cacheScope)) {
-            handleSessionExpired();
-          }
-        })
-        .catch((error) => {
-          if (!request.signal.aborted) console.warn('Session recheck failed:', error);
-        });
+      if (document.visibilityState !== 'hidden') void revalidate();
     };
+    const interval = window.setInterval(checkOnReturn, 60_000);
+    window.addEventListener('online', checkOnReturn);
     window.addEventListener('focus', checkOnReturn);
     document.addEventListener('visibilitychange', checkOnReturn);
     return () => {
-      controller?.abort();
+      requestRef.current?.abort(); clearInterval(interval);
+      window.removeEventListener('online', checkOnReturn);
       window.removeEventListener('focus', checkOnReturn);
       document.removeEventListener('visibilitychange', checkOnReturn);
     };
-  }, [cacheScope, handleSessionExpired]);
+  }, [revalidate]);
 
-  const handleLogout = async () => {
-    if (cacheScope) clearedScopesRef.current.add(cacheScope);
+  useEffect(() => {
+    const handleRevocation = () => {
+      epoch.current++;
+      requestRef.current?.abort();
+      clearLocalSession();
+      if (!loggingOutRef.current) setAuth(authRef.current.status === 'authenticated'
+        ? { status: 'anonymous', message: 'この端末のログインを終了しました。' }
+        : { status: 'anonymous' });
+      void clearStoredLyrics();
+    };
+    const message = (event: MessageEvent) => { if (event.data?.type === 'AUTH_REVOKED') handleRevocation(); };
+    const storage = (event: StorageEvent) => {
+      if (event.key !== OFFLINE_SESSION_KEY) return;
+      const cached = loadOfflineSession();
+      if (!cached) handleRevocation();
+      else setAuth({ status: 'authenticated', session: cached });
+    };
+    navigator.serviceWorker?.addEventListener('message', message);
+    window.addEventListener('storage', storage);
+    return () => { navigator.serviceWorker?.removeEventListener('message', message); window.removeEventListener('storage', storage); };
+  }, []);
+
+  const currentSession = auth.status === 'authenticated' ? auth.session : null;
+  useEffect(() => {
+    if (!currentSession?.offlineUntil) return;
+    const deadline = currentSession.offlineUntil;
+    let timer: number;
+    const check = () => {
+      if (!loadOfflineSession()) {
+        setAuth({ status: 'error', message: '保存済み音源の利用期限が切れたか、端末の日時が変更されています。オンラインで確認してください。' });
+        void revalidate();
+      } else timer = window.setTimeout(check, Math.min(Math.max(0, deadline - Date.now()), 60_000));
+    };
+    timer = window.setTimeout(check, Math.min(Math.max(0, deadline - Date.now()), 60_000));
+    return () => clearTimeout(timer);
+  }, [currentSession, revalidate]);
+
+  const handleLogout = useCallback(async () => {
+    epoch.current++;
+    requestRef.current?.abort();
+    loggingOutRef.current = true;
     setAuth({ status: 'loggingOut' });
-    const clearing = clearPrivateAudioCache(cacheScope).catch(console.warn);
+    const clearing = Promise.allSettled([clearPrivateAudioCache(), clearStoredLyrics()]);
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5_000);
+    let serverCleared = false;
     try {
-      const response = await fetch('/.netlify/functions/logout', {
-        method: 'POST',
-        credentials: 'same-origin',
-        cache: 'no-store',
-      });
-      if (!response.ok) throw new Error('Logout failed');
-      await clearing;
-      setAuth({ status: 'anonymous' });
-    } catch {
-      await clearing;
-      setAuth({
-        status: 'error',
-        message: 'ログアウトを完了できませんでした。通信状態を確認して再試行してください。',
-        retry: 'logout',
-      });
-    }
-  };
+      serverCleared = (await fetch('/api/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store', signal: controller.signal })).ok;
+    } catch { /* Local revocation remains effective until the next explicit login. */ }
+    finally { clearTimeout(timeout); }
+    await clearing;
+    loggingOutRef.current = false;
+    setAuth({ status: 'anonymous', message: serverCleared ? 'ログアウトし、この端末に保存した音源と歌詞を削除しました。' : 'この端末からログアウトし、保存した音源と歌詞を削除しました。次にオンラインでログインしてください。' });
+  }, []);
 
-  return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
-      {auth.status === 'authenticated' ? (
-        <PlayerScreen
-          cacheScope={auth.session.cacheScope}
-          onSessionExpired={handleSessionExpired}
-          onLogout={handleLogout}
-        />
-      ) : auth.status === 'anonymous' ? (
-        <LoginPage
-          onLoggedIn={(session) => setAuth({ status: 'authenticated', session })}
-          message={auth.message}
-        />
-      ) : (
-        <Container maxWidth="xs" sx={{ py: 6 }}>
-          <Stack spacing={2} role="status">
-            {auth.status === 'error' ? (
-              <>
-                <Alert severity="error">{auth.message}</Alert>
-                <Button
-                  variant="contained"
-                  onClick={() => {
-                    if (auth.retry === 'logout') void handleLogout();
-                    else {
-                      setAuth({ status: 'checking' });
-                      setRetryCount((value) => value + 1);
-                    }
-                  }}
-                >
-                  再試行
-                </Button>
-              </>
-            ) : auth.status === 'loggingOut' ? (
-              'ログアウト中…'
-            ) : (
-              'ログイン状態を確認中…'
-            )}
-          </Stack>
-        </Container>
-      )}
-    </ThemeProvider>
-  );
+  if (auth.status === 'authenticated') return <PlayerScreen key={auth.session.cacheScope} session={auth.session} cacheScope={auth.session.cacheScope} onSessionExpired={invalidate} onLogout={() => { void handleLogout(); }} />;
+  if (auth.status === 'anonymous') return <LoginPage message={auth.message} onLoggedIn={session => { epoch.current++; setAuth({ status: 'authenticated', session }); }} />;
+  return <main className="auth-screen"><section className="auth-card" role="status">
+    <h1>SetagayaGenico</h1>
+    <p>{auth.status === 'error' ? auth.message : auth.status === 'checking' ? 'ログインを確認しています…' : 'ログアウトしています…'}</p>
+    {auth.status === 'error' && <><button type="button" className="auth-primary" onClick={() => { setAuth({ status: 'checking' }); void revalidate(); }}>オンラインで確認</button><button type="button" onClick={() => setAuth({ status: 'anonymous' })}>ログイン画面へ</button></>}
+  </section></main>;
 }

@@ -1,6 +1,6 @@
 // Local browser verification only. Never bundled into the production application.
 import { createServer } from 'node:http';
-import { scryptSync } from 'node:crypto';
+import { createHash, scryptSync } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { Readable } from 'node:stream';
@@ -26,12 +26,9 @@ process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 = JSON.stringify({
   private_key: 'test-fixture-key',
 });
 
-// MPEG-1 Layer III, 128 kbit/s, 44.1 kHz stereo: zero spectral coefficients.
-const frameLength = 417;
-const audioFixture = Buffer.alloc(frameLength * 96);
-for (let offset = 0; offset < audioFixture.length; offset += frameLength) {
-  audioFixture.set([0xff, 0xfb, 0x90, 0x00], offset);
-}
+// Original encoded silence: a real decodable MP3, long enough to inspect playback.
+const audioFixture = await readFile(new URL('../fixtures/silence.mp3', import.meta.url));
+const fixtureVersion = createHash('md5').update(audioFixture).digest('hex');
 const files = [
   { id: 'browser_fixture_audio_1111111111', name: 'Security fixture one_track.mp3' },
   { id: 'browser_fixture_audio_2222222222', name: 'Security fixture two_track.mp3' },
@@ -41,7 +38,7 @@ const files = [
   size: String(audioFixture.length),
   parents: [process.env.FOLDER_ID],
   trashed: false,
-  md5Checksum: `fixture-version-${file.id}`,
+  md5Checksum: fixtureVersion,
   modifiedTime: '2026-10-26T00:00:00Z',
 }));
 setDriveMock(() => ({
@@ -100,7 +97,7 @@ globalThis.fetch = async (input, init) => {
 
 const names = ['login', 'session', 'logout', 'list', 'stream'];
 const handlers = Object.fromEntries(
-  await Promise.all(names.map(async (name) => [name, await loadFunction(name)]))
+  await Promise.all(names.map(async (name) => [name, await loadFunction(name, { directory: 'api', webExport: true })]))
 );
 const types = {
   '.html': 'text/html; charset=utf-8',
@@ -116,12 +113,7 @@ const types = {
 const server = createServer(async (incoming, outgoing) => {
   try {
     const url = new URL(incoming.url ?? '/', origin);
-    const functionName =
-      url.pathname === '/api/login'
-        ? 'login'
-        : /^\/\.netlify\/functions\/(login|session|logout|list|stream)(?:\/|$)/.exec(
-            url.pathname
-          )?.[1];
+    const functionName = /^\/(?:api|\.netlify\/functions)\/(login|session|logout|list|stream)(?:\/|$)/.exec(url.pathname)?.[1];
     let response;
     if (functionName) {
       const abort = new AbortController();

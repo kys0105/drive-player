@@ -1,108 +1,60 @@
-# Drive Player
+# SetagayaGenico / Drive Player
 
-Google ドライブ上の音声ファイルを再生する React + TypeScript + Vite プロジェクトです。Netlify Functions を介して Google Drive API にアクセスします。
+Google Driveの音源を、iPhone・Androidのブラウザで聴くためのアプリです。Codexで確認した白いライブラリと濃紺の再生画面を本番UIの基準にしています。
 
-## 必要なもの
+本番: **https://drive-player-yumosin-house-studio.vercel.app/**
 
-- Node.js 24.22.1 以上の 24 系（`.node-version` / `.nvmrc` 参照）
-- npm
+旧Netlify URLは新しい本番へ転送します。パスワードは従来どおりです。初回は新しいサイトでログインし、必要な曲を再保存してください。
 
-## 環境設定
+## 主な機能
 
-1. リポジトリのクローン
+- 曲検索、ミニプレイヤー、再生詳細、シーク、前後の曲、1曲／全曲リピート、連続再生。
+- 曲順を端末内に保存し、既存の「ゆもしんの曲順」へ切り替えられます。
+- 曲を選んで端末へ保存。保存中の取消、失敗後の再試行、まとめて保存、保存済みの削除。
+- 保存済み音源はローカルの完全データから再生・シークし、再生開始のために毎回サーバー認証を待ちません。
+- 最後に有効なログインをオンラインで確認してから30日間、保存曲と一覧を圏外でも開けます。通信失敗や単なる再生で期限を延ばしません。
+- 歌詞は各端末にTXT／LRCで登録できます。時刻付きの行は実音源に追従し、行を押すとその時刻へ移動します。通常のTXTは全文表示です。実際の歌詞の自動取得・生成は行いません。
+- PWA対応。iPhoneはSafariの共有メニューから「ホーム画面に追加」、Androidはブラウザのインストール機能で追加できます。
 
-   ```bash
-   git clone https://github.com/kys0105/drive-player
-   cd drive-player
-   ```
+## 実行環境と開発
 
-2. 依存関係のインストール
+Node.js **24.22.1以上・25未満**を使用します。Vercelのビルド・Functionsも24系です。
 
-   ```bash
-   npm ci
-   ```
-
-3. 環境変数の設定
-
-   `.env.example` を `.env` にコピーし、次のコマンドで新しいログイン用パスワードを設定してください。入力は非表示で、パスワードそのものは保存しません。
-
-   ```bash
-   npm run auth:setup
-   ```
-
-   16文字以上の新しいパスワードを使ってください。以前のブラウザ内固定パスワードはソースに含まれていたため、再利用しないでください。コマンドは `APP_PASSWORD_HASH`（scrypt形式）と `SESSION_SECRET`（ランダムな署名鍵）を `.env` に保存します。既存の認証設定を上書きしません。
-
-   続けて `.env` に Google Drive の設定を記述します。
-
-   ```env
-   GOOGLE_SERVICE_ACCOUNT=...       # または GOOGLE_SERVICE_ACCOUNT_BASE64
-   FOLDER_ID=Google Drive のフォルダ ID
-   ```
-
-   `GOOGLE_SERVICE_ACCOUNT` には Google Cloud で取得したサービスアカウントの JSON を直接記載するか、Base64 でエンコードした内容を `GOOGLE_SERVICE_ACCOUNT_BASE64` に設定します。`FOLDER_ID` は再生対象フォルダの ID です。サービスアカウントには、このフォルダだけを閲覧できる権限を与えてください。
-
-   秘密情報を `VITE_` で始まる環境変数にしないでください。`.env` と `.env.*` は `.env.example` を除いて Git 管理対象外です。
-
-4. Netlify CLI のインストール（任意）
-
-   ```bash
-   npm install -g netlify-cli
-   netlify login
-   ```
-
-## 開発
-
-- 開発サーバー
-
-  ```bash
-  npm run dev
-  ```
-
-  Vite単体はフロントエンドのみです。ログイン・一覧・音声再生の確認には、下記の `netlify dev` を使ってください。
-
-- Netlify Functions と同時に起動
-
-  ```bash
-  netlify dev
-  ```
-
-## よく使うコマンド
-
-| コマンド          | 説明                                      |
-| ----------------- | ----------------------------------------- |
-| `npm run lint`    | ESLint による静的解析                     |
-| `npm run build`   | TypeScript をビルドし Vite で成果物を作成 |
-| `npm run preview` | ビルド済みアプリのローカルプレビュー      |
-| `npm run test:security` | 認証・取得制限・キャッシュの回帰テスト |
-| `npm run auth:setup` | 非表示入力でローカルの認証設定を作成 |
-
-## Netlifyへの反映
-
-デプロイ前に、Netlify側にも `APP_PASSWORD_HASH`、`SESSION_SECRET`、`FOLDER_ID`、サービスアカウントの環境変数を設定してください。スコープを選べるプランではFunctionsスコープに限定します。スコープ指定に対応しないプランでは標準スコープを使い、`VITE_`接頭辞を付けず、フロントエンドのソースから参照しないでください。値をソースやビルド成果物へ埋め込まないでください。未設定時は認証APIが503となり、Driveへのアクセスを拒否します。
-
-`netlify.toml` はビルド用Node.jsを24.22.1に指定します。Functionsの実行環境も24系へ統一するため、Netlifyの環境変数 `AWS_LAMBDA_JS_RUNTIME` を `nodejs24.x` に設定し、再デプロイしてください。この変数は `netlify.toml` では設定できません。FunctionsのパッチバージョンはNetlify/AWSが管理するため、本番側のパッチ適用状況は別途確認します。[Netlifyの実行環境設定](https://docs.netlify.com/build/functions/configuration/#nodejs-version-for-runtime)
-
-2026年10月26日の本番実測は **24.21.0** でした。ビルド・検証用24.22.1とは異なり、10月21日のNode.jsセキュリティ修正が本番へ適用済みかは事業者確認が残ります。[対応状況](docs/SECURITY-STATUS.md)を参照してください。
-
-## 認証と音声キャッシュ
-
-本番サイトでは、旧版の無認証APIがデプロイ固定URLに残ることを防ぐため、Netlify Firewallでunpublished deploysを遮断しています。デプロイ履歴は保持します。プレビュー確認が必要な場合は、管理者のIPだけを許可するルールと、検証用の認証設定を用意してください。published側はアプリの認証で制御します。
-
-- パスワードはサーバーで検証します。ログイン状態は署名付きのHttpOnly Cookieに最大30日間保存し、本番ではHTTPS専用・SameSite=Strictです。HTTP開発はlocalhostのみに対応します。
-- `list` と `stream` はリクエストごとに認証します。`stream` は `FOLDER_ID` 直下の、削除されていない `audio/mpeg` ファイルだけ取得します。
-- ログインAPIは `/api/login` です。Netlifyのレート制限で、同一IP・ドメインからの試行を60秒あたり10回に制限します。このEdge側制限はユニットテストやローカルモックサーバーでは再現しません。
-- APIと音声のHTTPレスポンスは `private, no-store` とし、共有CDNやブラウザのHTTPキャッシュに保存させません。Service Workerだけが、認証セッション別の音声キャッシュを管理します。
-- Service Workerはキャッシュを返す前にもサーバーへ認証確認します。**オフライン再生はできません。** Rangeリクエストは認証後にネットワークへ転送し、音声の断片は保存しません。
-- 初回更新時に旧音声キャッシュを削除するため、再ログインと音声の再取得が必要です。ログアウトすると再生を停止し、音声キャッシュを削除します。
-- `APP_PASSWORD_HASH`、`SESSION_SECRET`、`FOLDER_ID` の変更は既存セッションを無効化します。署名付きCookie方式ではログアウトはそのブラウザのCookieを削除します。漏洩が疑われるCookieを全端末で失効させる場合は、サーバーの署名鍵を更新し再デプロイしてください。
-
-## セキュリティ検証
-
-```bash
-npm run test:security
-npm run lint
-npm run build
-npm audit
+```sh
+npm ci
+npm run dev
 ```
 
-回帰テストは本番APIコードを読み込み、Google Driveと音声の上流通信だけをモック化します。未認証・Cookie改ざん/期限切れ・CSRF・フォルダ外/非音声ファイル・Range/HEAD・Service Workerの認証とログアウト競合を検証します。本番の環境変数、Drive共有権限、Netlify Edgeのレート制限は別途確認が必要です。
+Vite単体はUIのみです。APIを含む開発には、対象のVercelプロジェクトを確認してから `vercel dev` を使い、ローカルの環境変数を用意してください。
+
+`.env.example` のサーバー用4項目を設定します。`GOOGLE_SERVICE_ACCOUNT_BASE64` または `GOOGLE_SERVICE_ACCOUNT` のいずれかに、対象Driveフォルダの読み取り権限だけを持つサービスアカウントを指定します。秘密値へ `VITE_` を付けたり、フロントエンドやGitへ埋め込んだりしないでください。
+
+```sh
+npm run lint
+npm run build
+npm run test:security
+npm run test:lyrics
+npm audit --omit=dev
+```
+
+実際のAPIハンドラーにDrive上流だけを置き換えた検証画面は、ビルド後 `node tests/security/preview-server.mjs` でlocalhost:4177に起動します。これはテスト専用のパスワード・無音音源を使い、本番には含めません。
+
+## 認証・複数人での利用
+
+共通パスワードをサーバーで検証し、署名付きのHttpOnly Cookieを発行します。HTTPS・SameSite=Strictで、各ブラウザに異なる認証scopeを発行します。曲順、歌詞、保存曲、再生状態は端末ごとに独立します。
+
+オンラインで401を確認すると再生を停止し、その端末の許可・保存音源・歌詞を削除して再ログインを求めます。ログアウトも同様です。圏外の端末にはパスワード変更を即時反映できず、既存の30日許可が残る場合があります。
+
+Cookieの期限と圏外利用の期限は別です。ブラウザの保存領域の削除、容量不足、端末の日時変更、保存中に画面を閉じる操作などでは、オンラインでの再確認や再保存が必要になることがあります。
+
+## Vercel
+
+プロジェクト: `yumosin-house-studio / drive-player`。本番設定はProductionのSecretとして管理します。Previewへ本番のDrive接続設定を複製しません。
+
+通常の本番更新はGitHubの`main`をVercelへ自動デプロイします。旧Netlifyの自動ビルドは停止し、転送だけを提供します。
+
+APIは `/api/login`, `/api/session`, `/api/logout`, `/api/list`, `/api/stream/:id`。旧Netlify APIのパスも認証を通る互換ルートにしています。音源は指定フォルダ直下のMP3だけを取得し、ストリームで配信します。APIは共有CDNへ保存しません。
+
+パスワード変更は `npm run auth:setup` で8文字以上のパスワードからハッシュを作成し、[Vercelの環境変数](https://vercel.com/yumosin-house-studio/drive-player/settings/environment-variables)でProductionの `APP_PASSWORD_HASH` を更新し、再デプロイします。生成ツールは既存のローカル設定があると上書きを拒否します。ローカルファイルの変更だけで本番は変わりません。
+
+移管・切替・ロールバックの記録は [docs/VERCEL-MIGRATION.md](docs/VERCEL-MIGRATION.md) を参照してください。Claude Designの元データ・設定は変更しません。

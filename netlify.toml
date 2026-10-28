@@ -1,18 +1,11 @@
 [build]
-  command = "npm run build"
-  publish = "dist"
+  # The application is deployed on Vercel. This site only retires the old origin.
+  command = "node -e \"console.log('Netlify migration redirect only')\""
+  publish = "netlify/redirect"
 
 [build.environment]
   NODE_VERSION = "24.22.1"
 
 [functions]
-  directory = "netlify/functions"
-  node_bundler = "esbuild"
-
-[[headers]]
-  for = "/*"
-  [headers.values]
-    X-Content-Type-Options = "nosniff"
-    Referrer-Policy = "same-origin"
-    X-Frame-Options = "DENY"
-    Content-Security-Policy = "frame-ancestors 'none'"
+  # Keep old API source for history/tests, but do not deploy it to the old origin.
+  directory = "netlify/disabled-functions"

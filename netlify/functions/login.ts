@@ -1,6 +1,6 @@
 import type { Config } from '@netlify/functions';
-import { authUnavailable, issueSession, passwordMatches } from './_auth.ts';
-import { jsonResponse, methodNotAllowed, privateResponse, rejectCrossOrigin } from './_http.ts';
+import { authUnavailable, issueSession, passwordMatches, sessionDetails } from './_auth.js';
+import { jsonResponse, methodNotAllowed, privateResponse, rejectCrossOrigin } from './_http.js';
 
 async function readPassword(req: Request): Promise<string | null> {
   if (req.headers.get('content-type')?.split(';')[0].trim() !== 'application/json' || !req.body) {
@@ -42,7 +42,7 @@ export default async function login(req: Request): Promise<Response> {
   try {
     if (!(await passwordMatches(password))) return privateResponse('Invalid password', 401);
     const { session, cookie } = issueSession(req);
-    return jsonResponse(session, 200, { 'Set-Cookie': cookie });
+    return jsonResponse(sessionDetails(session), 200, { 'Set-Cookie': cookie });
   } catch {
     return privateResponse('Unable to sign in', 503);
   }
