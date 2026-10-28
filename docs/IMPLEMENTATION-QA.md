@@ -27,4 +27,6 @@
 
 PC Chromeでのスマホ幅表示・実音源API確認と、iPhone Safari／Android実機のOSバックグラウンド動作は区別する。後者はこのPCだけでは検証できない。ブラウザの保存領域を永久保持する保証は行わない。
 
-本番デプロイと切替の結果は [VERCEL-MIGRATION.md](VERCEL-MIGRATION.md) に追記する。
+最終結果: security 64件＋lyrics 17件の**81件PASS**。lint／TypeScript／Vite build成功。本番での実音源・認証・WAF・旧サイト転送の確認も完了。詳細は [VERCEL-MIGRATION.md](VERCEL-MIGRATION.md) を参照。
+
+追加の実操作で、先頭曲が未保存でも保存済みの2曲目を選んで圏外起動できることを確認した。旧Netlifyの転送用workerは、正常／保存領域拒否のVM確認と、10通りのHTTP契約確認を実施した。

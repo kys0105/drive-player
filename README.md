@@ -2,6 +2,10 @@
 
 Google Driveの音源を、iPhone・Androidのブラウザで聴くためのアプリです。Codexで確認した白いライブラリと濃紺の再生画面を本番UIの基準にしています。
 
+本番: **https://drive-player-yumosin-house-studio.vercel.app/**
+
+旧Netlify URLは新しい本番へ転送します。パスワードは従来どおりです。初回は新しいサイトでログインし、必要な曲を再保存してください。
+
 ## 主な機能
 
 - 曲検索、ミニプレイヤー、再生詳細、シーク、前後の曲、1曲／全曲リピート、連続再生。
@@ -46,6 +50,8 @@ Cookieの期限と圏外利用の期限は別です。ブラウザの保存領�
 ## Vercel
 
 プロジェクト: `yumosin-house-studio / drive-player`。本番設定はProductionのSecretとして管理します。Previewへ本番のDrive接続設定を複製しません。
+
+通常の本番更新はGitHubの`main`をVercelへ自動デプロイします。旧Netlifyの自動ビルドは停止し、転送だけを提供します。
 
 APIは `/api/login`, `/api/session`, `/api/logout`, `/api/list`, `/api/stream/:id`。旧Netlify APIのパスも認証を通る互換ルートにしています。音源は指定フォルダ直下のMP3だけを取得し、ストリームで配信します。APIは共有CDNへ保存しません。
 

@@ -27,6 +27,17 @@ Vercelの標準デプロイ保護を使用し、固定本番エイリアスは�
 
 Vercel CLI 65.4.0で対象プロジェクトを明示的にリンクし、`project inspect --non-interactive` で所有チーム・プロジェクトIDを確認した。`.vercelignore` によりClaude成果、試作品、ローカル秘密、テスト用データはデプロイしない。
 
-Production環境のデプロイを `--skip-domain` で作成し、確認してから同じデプロイをpromoteする。公開後の障害時はVercelで以前の確認済みデプロイをpromoteし直す。初回の問題なら旧Netlifyの記録済み公開デプロイを復元できる。新環境での認証scope・端末保存は旧環境と独立する。
+Production環境へリリースし、Vercel上で実音源を確認してから旧Netlifyを切り替える。公開後の障害時はVercelで以前の確認済みデプロイをpromoteし直す。初回の問題なら旧Netlifyの記録済み公開デプロイを復元できる。新環境での認証scope・端末保存は旧環境と独立する。
 
-実行結果と最終URLは検証完了後に追記する。
+## 切替の結果
+
+- 本番URL: **https://drive-player-yumosin-house-studio.vercel.app/**
+- 初回の検証済み本番デプロイ: `dpl_8vuXceE3G5erB9rqHnYtA1wi9ZYq`（ソース`8854d53`）。以後はmainのGit連携デプロイで更新する。
+- 2026-10-28 12:07 JST、実Driveの10曲取得、未認証401、他originログイン403、既存パスワードでログイン200、Range206、HEAD200、全音源200を確認。
+- 5,184,064バイトの音源をストリーム配信し、DriveのMD5と一致。4.5MBを超える応答も正常。
+- WAF実測: 誤パスワード10回は401、11回目以降429。旧API aliasも同じカウンターで429。
+- Chrome本番でnoahの実再生、保存完了、保存済み音源の再起動後再生を確認。390×844と360×740で画面全体がスクロールせず主要操作が収まることを確認。
+- 2026-10-28 12:08 JST、旧Netlifyを転送専用デプロイ`6ae16710d8421f9d7d0d9f45`へ変更。旧ルート・旧APIは新URLへの302、`/sw.js`は登録解除用workerの200を実測。Chromeでも移動を確認。
+- Netlifyの`build_settings.stop_builds=true`を設定・再読取確認済み。Gitの更新で旧アプリが再公開されないようにした。
+
+バックエンドはNodeNextの出力先`.js`を相対importし、Vercel上の実行コードと解決先を一致させる。VercelのREADY表示だけではAPI起動成功を意味しないため、匿名リクエスト・認証・実音源のHTTP確認までを公開チェックに含める。
