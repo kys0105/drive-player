@@ -1,0 +1,72 @@
+/* The library stays in place while the expanded player reveals above it. */
+.player-screen[data-present='false'] {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+.player-screen[data-open='false'] { pointer-events: none; }
+.mini-player { transition: opacity 180ms ease; }
+.is-player-open .mini-player { opacity: 0; }
+.player-cover { transform-origin: top left; }
+
+.player-heading { display: grid; flex: 1; min-width: 0; align-items: center; }
+.player-heading > * {
+  grid-area: 1 / 1;
+  min-width: 0;
+  transition: opacity 220ms ease, transform 320ms cubic-bezier(.22, 1, .36, 1), visibility 220ms;
+}
+.player-heading .compact-track { opacity: 0; visibility: hidden; transform: translateY(6px); }
+.lyrics-mode .player-heading .compact-track { opacity: 1; visibility: visible; transform: none; }
+.lyrics-mode .player-context { opacity: 0; visibility: hidden; transform: translateY(-6px); }
+
+.player-body { display: grid; flex: 1; min-height: 0; }
+.player-body > .player-visual,
+.player-body > .player-lyrics-region {
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  transition: opacity 260ms ease, transform 380ms cubic-bezier(.22, 1, .36, 1), visibility 260ms;
+}
+.player-body > .player-lyrics-region { opacity: 0; visibility: hidden; transform: translateY(18px); }
+.lyrics-mode .player-body > .player-lyrics-region { opacity: 1; visibility: visible; transform: none; }
+.lyrics-mode .player-body > .player-visual { opacity: 0; visibility: hidden; transform: translateY(-12px); }
+.player-body .lyrics-full { animation: lyrics-full-in 220ms ease-out; }
+.player-body .lyrics-lines { animation: lyrics-follow-in 220ms ease-out; }
+@keyframes lyrics-full-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes lyrics-follow-in {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.player-header { transition: margin-bottom 300ms ease, min-height 300ms ease; }
+.transport, .player-tools { transition: height 300ms cubic-bezier(.22, 1, .36, 1); }
+.player-controls { min-width: 0; }
+.next-preview {
+  max-height: 100px;
+  overflow: hidden;
+  transition: min-height 300ms ease, max-height 300ms ease, margin 300ms ease,
+    padding 300ms ease, opacity 180ms ease, visibility 300ms;
+}
+.lyrics-mode .next-preview {
+  min-height: 0;
+  max-height: 0;
+  margin-top: 0;
+  padding-top: 0;
+  border-top-color: transparent;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mini-player,
+  .player-heading > *,
+  .player-body > .player-visual,
+  .player-body > .player-lyrics-region,
+  .player-header,
+  .transport,
+  .player-tools,
+  .next-preview { transition: none; }
+}

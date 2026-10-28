@@ -1,0 +1,60 @@
+dialog.sheet-dialog[data-motion="true"] {
+  transform: translate3d(0, calc(100% + 24px), 0);
+  opacity: 0;
+  transition: transform 260ms cubic-bezier(.4, 0, .6, 1), opacity 200ms ease;
+}
+
+dialog.sheet-dialog[data-motion="true"][open] {
+  will-change: transform, opacity;
+}
+
+dialog.sheet-dialog[data-motion="true"][data-visible="true"] {
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+  transition-duration: 380ms, 220ms;
+  transition-timing-function: cubic-bezier(.18, .9, .24, 1.04), ease-out;
+}
+
+dialog.sheet-dialog[data-motion="true"]::backdrop {
+  background: #0000;
+  backdrop-filter: blur(0);
+  transition: background 240ms ease, backdrop-filter 240ms ease;
+}
+
+dialog.sheet-dialog[data-motion="true"][data-visible="true"]::backdrop {
+  background: #0008;
+  backdrop-filter: blur(3px);
+}
+
+.sheet-page--leaving {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  animation: sheet-page-out 200ms ease both;
+}
+
+.sheet-page--entering {
+  animation: sheet-page-in 200ms ease both;
+}
+
+@keyframes sheet-page-in {
+  from { opacity: 0; transform: translate3d(0, 6px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+@keyframes sheet-page-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  dialog.sheet-dialog[data-motion="true"],
+  dialog.sheet-dialog[data-motion="true"]::backdrop {
+    transition: none;
+  }
+
+  .sheet-page--entering,
+  .sheet-page--leaving {
+    animation: none;
+  }
+}
