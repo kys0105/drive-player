@@ -17,7 +17,10 @@ function mutate(operation) {
 }
 function failure(status) { return new Response(null, { status, headers: { 'Cache-Control': 'private, no-store' } }); }
 function audioCache(scope) { return `${AUDIO_PREFIX}${encodeURIComponent(scope)}`; }
-function stateUrl(kind, scope) { return new URL(`/__private__/${kind}/${encodeURIComponent(scope)}`, self.location.origin).href; }
+function stateUrl(kind, scope, albumId) {
+  const album = albumId === undefined ? '' : `/${encodeURIComponent(albumId)}`;
+  return new URL(`/__private__/${kind}${album}/${encodeURIComponent(scope)}`, self.location.origin).href;
+}
 async function readJson(url) {
   try { const cache = await caches.open(META_CACHE); return await (await cache.match(url))?.json(); } catch { return null; }
 }
@@ -89,8 +92,9 @@ async function recordSession(value, expected) {
     if (previous && previous.cacheScope !== value.cacheScope) {
       await caches.delete(audioCache(previous.cacheScope));
       const meta = await caches.open(META_CACHE);
-      await meta.delete(stateUrl('catalog', previous.cacheScope));
-      await meta.delete(stateUrl('saved', previous.cacheScope));
+      for (const request of await meta.keys()) {
+        if (new URL(request.url).pathname.endsWith(`/${encodeURIComponent(previous.cacheScope)}`)) await meta.delete(request);
+      }
     }
     await putJson(LEASE_URL, { ...value, verifiedAt, offlineUntil, lastSeenAt: now });
   });
@@ -121,7 +125,72 @@ async function requireLease(scope) {
   if (!current || current.cacheScope !== scope) throw new Error('保存する前にオンラインでログインを確認してください。');
   return current;
 }
-async function savedTracks(scope) { return (await readJson(stateUrl('saved', scope))) ?? []; }
+async function savedTracks(scope) {
+  const value = await readJson(stateUrl('saved', scope));
+  return Array.isArray(value) ? value : [];
+}
+
+function validAlbumId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 256 && !/[\u0000-\u001f]/.test(value);
+}
+
+function checkedTracks(value, albumId) {
+  if (!Array.isArray(value) || value.some(track => !track || typeof track.id !== 'string' || !track.id || typeof track.title !== 'string')) throw new Error('曲一覧の保存データが正しくありません。');
+  if (albumId !== undefined && !validAlbumId(albumId)) throw new Error('フォルダが正しくありません。');
+  return value.map(track => {
+    if (albumId === undefined) return track;
+    if (track.albumId !== undefined && track.albumId !== albumId) throw new Error('別のフォルダの曲一覧は保存できません。');
+    return { ...track, albumId };
+  });
+}
+
+function checkedLibrary(value) {
+  if (!value || !Array.isArray(value.albums) || value.albums.some(album => !album || !validAlbumId(album.id) || typeof album.name !== 'string')) throw new Error('フォルダ一覧の保存データが正しくありません。');
+  const ids = new Set(value.albums.map(album => album.id));
+  if (ids.size !== value.albums.length || (value.defaultAlbumId !== null && !ids.has(value.defaultAlbumId))) throw new Error('既定のフォルダが正しくありません。');
+  return { albums: value.albums.map(album => ({ id: album.id, name: album.name, ...(album.legacy === true ? { legacy: true } : {}) })), defaultAlbumId: value.defaultAlbumId };
+}
+
+async function saveMetadata(data, kind) {
+  const expected = generation;
+  const value = kind === 'library' ? checkedLibrary(data.snapshot) : checkedTracks(data.tracks, data.albumId);
+  await requireLease(data.cacheScope);
+  await mutate(async () => {
+    const current = await readJson(LEASE_URL);
+    if (generation !== expected || current?.blocked || current?.cacheScope !== data.cacheScope || !Number.isFinite(current.offlineUntil) || Date.now() >= current.offlineUntil) throw new Error('ログインが変更されたため保存を中止しました。');
+    await putJson(stateUrl(kind, data.cacheScope, kind === 'catalog' ? data.albumId : undefined), value);
+  });
+}
+
+async function migrateSavedMetadata(data) {
+  const expected = generation;
+  const tracks = checkedTracks(data.tracks);
+  const candidates = new Map(tracks.filter(track => validAlbumId(track.albumId) && typeof track.ver === 'string' && track.ver).map(track => [track.id, track]));
+  await requireLease(data.cacheScope);
+  await mutate(async () => {
+    const current = await readJson(LEASE_URL);
+    if (generation !== expected || current?.blocked || current?.cacheScope !== data.cacheScope || !Number.isFinite(current.offlineUntil) || Date.now() >= current.offlineUntil) throw new Error('ログインが変更されたため移行を中止しました。');
+    const enrich = entry => {
+      const track = candidates.get(entry?.id);
+      if (!track) return entry;
+      let version = entry.ver;
+      if (typeof version !== 'string' && entry.savedUrl) {
+        try { version = new URL(entry.savedUrl, self.location.origin).searchParams.get('v'); } catch { return entry; }
+      }
+      if (version !== track.ver) return entry;
+      // Preserve the body key even if artwork, filename, album or lyrics changed.
+      return { ...entry, ...track, lyrics: track.lyrics, lyricsIssue: track.lyricsIssue, ...(entry.savedUrl ? { savedUrl: entry.savedUrl } : {}) };
+    };
+    const previousSaved = await savedTracks(data.cacheScope);
+    const updatedSaved = previousSaved.map(enrich);
+    if (JSON.stringify(previousSaved) !== JSON.stringify(updatedSaved)) await putJson(stateUrl('saved', data.cacheScope), updatedSaved);
+    const previousCatalog = await readJson(stateUrl('catalog', data.cacheScope));
+    if (Array.isArray(previousCatalog)) {
+      const updatedCatalog = previousCatalog.map(enrich);
+      if (JSON.stringify(previousCatalog) !== JSON.stringify(updatedCatalog)) await putJson(stateUrl('catalog', data.cacheScope), updatedCatalog);
+    }
+  });
+}
 async function storeTrack(data) {
   const expected = generation;
   const canonical = audioUrl(data.url);
@@ -192,11 +261,9 @@ self.addEventListener('message', event => {
   else if (data.type === 'SYNC_SESSION') task = checkSession().then(value => ({ session: value }));
   else if (data.type === 'STORE_TRACK') task = storeTrack(data).then(() => ({ saved: true }));
   else if (data.type === 'DELETE_TRACK') task = deleteTrack(data).then(() => ({ deleted: true }));
-  else if (data.type === 'SAVE_CATALOG') task = requireLease(data.cacheScope).then(() => mutate(async () => {
-    const current = await readJson(LEASE_URL);
-    if (current?.cacheScope !== data.cacheScope) throw new Error('Session changed');
-    await putJson(stateUrl('catalog', data.cacheScope), data.tracks);
-  })).then(() => ({ saved: true }));
+  else if (data.type === 'SAVE_CATALOG') task = saveMetadata(data, 'catalog').then(() => ({ saved: true }));
+  else if (data.type === 'SAVE_LIBRARY') task = saveMetadata(data, 'library').then(() => ({ saved: true }));
+  else if (data.type === 'MIGRATE_SAVED_TRACKS') task = migrateSavedMetadata(data).then(() => ({ migrated: true }));
   else if (data.type === 'CACHE_SHELL') task = shellUrls(data.urls).then(ready => ({ ready }));
   else return;
   event.waitUntil(Promise.resolve(task).then(reply, error => reply({ error: error?.name === 'QuotaExceededError'

@@ -1,9 +1,18 @@
-.lyrics-view { position:relative;display:flex;flex:1 1 auto;min-height:0;width:100%;height:100%;overflow:hidden;color:#fff; }
+.lyrics-view { position:relative;display:flex;flex-direction:column;flex:1 1 auto;min-height:0;width:100%;height:100%;overflow:hidden;color:#fff; }
 .lyrics-sr { position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0; }
-.lyrics-caption { position:absolute;z-index:2;top:12px;left:24px;right:24px;margin:0;color:#a8b3c4;font-size:12px;line-height:1.5;font-weight:500;text-align:center;pointer-events:none; }
-.lyrics-scroll { flex:1 1 auto;min-height:0;height:100%;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;-webkit-overflow-scrolling:touch; }
+.lyrics-toolbar { flex:none;display:flex;flex-direction:column;align-items:center;gap:7px;padding:8px 24px 0; }
+.lyrics-modes { display:flex;gap:3px;padding:3px;border-radius:24px;background:rgba(12,22,38,.45); }
+.lyrics-modes button { min-height:40px;min-width:82px;padding:8px 20px;border:0;border-radius:22px;background:transparent;color:#bec8d6;font-family:inherit;font-size:13px;font-weight:650;cursor:pointer; }
+.lyrics-modes button[aria-pressed="true"] { background:rgba(255,255,255,.18);color:#fff; }
+.lyrics-modes button:disabled { opacity:.4;cursor:default; }
+.lyrics-modes button:focus-visible { outline:2px solid #fff;outline-offset:2px; }
+.lyrics-caption { margin:0;color:#a8b3c4;font-size:12px;line-height:1.5;font-weight:500;text-align:center; }
+.lyrics-status { margin:0;color:#c0cad7;font-size:12px;line-height:1.5;text-align:center; }
+.lyrics-status button { min-height:30px;border:0;padding:2px 7px;background:transparent;color:#fff;font:inherit;text-decoration:underline;cursor:pointer; }
+.lyrics-scroll { flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;scrollbar-width:none;-webkit-overflow-scrolling:touch; }
 .lyrics-scroll::-webkit-scrollbar { display:none; }
 .lyrics-lines { display:flex;flex-direction:column;gap:30px;padding:110px 28px 200px; }
+.lyrics-full { padding:32px 28px 90px;color:#e1e7ef;font-family:inherit;font-size:24px;line-height:1.65;font-weight:650;letter-spacing:-.025em;white-space:pre-wrap;overflow-wrap:anywhere; }
 .lyrics-line { display:block;flex:0 0 auto;width:100%;min-height:44px;margin:0;padding:0;border:0;border-radius:3px;background:transparent;color:#8996a9;font-family:inherit;font-size:24px;line-height:1.48;font-weight:700;letter-spacing:-.035em;text-align:left;overflow-wrap:anywhere;transition:color 200ms ease;-webkit-tap-highlight-color:transparent; }
 button.lyrics-line { cursor:pointer; }
 button.lyrics-line:hover,button.lyrics-line:focus-visible { color:#e3e8ef; }
@@ -11,8 +20,8 @@ button.lyrics-line:focus-visible,.lyrics-follow:focus-visible,.lyrics-add:focus-
 .lyrics-line--active,button.lyrics-line--active:hover { color:#fff; }
 .lyrics-line--plain { color:#d9e0e9;font-weight:650; }
 .lyrics-follow { position:absolute;z-index:3;left:50%;bottom:10px;transform:translateX(-50%);min-height:40px;padding:8px 15px;border:1px solid rgba(255,255,255,.26);border-radius:20px;background:#24344a;color:#fff;font-family:inherit;font-size:12px;font-weight:600;line-height:1.4;white-space:nowrap;cursor:pointer; }
-.lyrics-empty { display:flex;flex:1 1 auto;flex-direction:column;align-items:center;justify-content:center;min-height:0;padding:32px 28px;text-align:center;color:#fff; }
-.lyrics-empty h2 { margin:0 0 12px;font-size:19px;line-height:1.5;font-weight:650;letter-spacing:-.025em; }
+.lyrics-empty { display:flex;flex:1 1 auto;flex-direction:column;align-items:center;justify-content:center;gap:12px;min-height:0;padding:20px 28px;overflow-y:auto;text-align:center;color:#fff; }
+.lyrics-empty h3 { margin:0;font-size:19px;line-height:1.5;font-weight:650;letter-spacing:-.025em; }
 .lyrics-empty p { margin:0 0 24px;color:#b0bbcb;font-size:14px;line-height:1.7; }
 .lyrics-add { min-height:44px;padding:12px 24px;border:0;border-radius:22px;background:#fff;color:#142238;font-family:inherit;font-size:14px;font-weight:650;line-height:1.4;cursor:pointer; }
 .lyrics-editor { display:flex;flex-direction:column;gap:14px;width:100%;max-height:min(80dvh,720px);min-height:0;padding:4px 0 8px;color:#18191c; }

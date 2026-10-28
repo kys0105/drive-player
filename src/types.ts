@@ -1,6 +1,14 @@
+export type Album = { id: string; name: string; legacy?: boolean };
+export type LyricsAsset = { id: string; ver: string; format: 'lrc' | 'txt' };
+export type LibrarySnapshot = { albums: Album[]; defaultAlbumId: string | null };
+
 export type Track = {
   id: string;
   title: string;
+  albumId?: string;
+  fileName?: string;
+  lyrics?: LyricsAsset;
+  lyricsIssue?: 'ambiguous';
   artist?: string;
   artwork?: string;
   mimeType?: string;

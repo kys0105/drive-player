@@ -29,26 +29,45 @@ process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 = JSON.stringify({
 // Original encoded silence: a real decodable MP3, long enough to inspect playback.
 const audioFixture = await readFile(new URL('../fixtures/silence.mp3', import.meta.url));
 const fixtureVersion = createHash('md5').update(audioFixture).digest('hex');
+const albumId = 'browser_fixture_album_3333333333';
+const demoAlbumId = 'browser_fixture_album_4444444444';
+process.env.DEFAULT_ALBUM_ID = albumId;
+const folder = (id, name, parent) => ({ id, name, mimeType: 'application/vnd.google-apps.folder', parents: [parent], trashed: false });
+const folders = [
+  folder(process.env.FOLDER_ID, '00_試聴用', 'browser_fixture_music_parent'),
+  folder(albumId, '3rd album', process.env.FOLDER_ID),
+  folder(demoAlbumId, 'Demo collection', process.env.FOLDER_ID),
+];
 const files = [
-  { id: 'browser_fixture_audio_1111111111', name: 'Security fixture one_track.mp3' },
-  { id: 'browser_fixture_audio_2222222222', name: 'Security fixture two_track.mp3' },
-].map((file) => ({
-  ...file,
-  mimeType: 'audio/mpeg',
-  size: String(audioFixture.length),
-  parents: [process.env.FOLDER_ID],
-  trashed: false,
-  md5Checksum: fixtureVersion,
-  modifiedTime: '2026-10-26T00:00:00Z',
+  { id: 'browser_fixture_audio_1111111111', name: 'Security fixture one_track.mp3', albumId },
+  { id: 'browser_fixture_audio_2222222222', name: 'Security fixture two_track.mp3', albumId },
+  { id: 'browser_fixture_audio_5555555555', name: 'Demo collection sample_track.mp3', albumId: demoAlbumId },
+].map(({ albumId: parent, ...file }) => ({
+  ...file, mimeType: 'audio/mpeg', size: String(audioFixture.length), parents: [parent],
+  trashed: false, md5Checksum: fixtureVersion, modifiedTime: '2026-10-28T00:00:00Z',
 }));
+// Original test-only text. No Notion lyrics or real private music are bundled.
+const lyricBodies = new Map([
+  ['browser_fixture_lyrics_1111111111', Buffer.from('[00:00.00]テスト用の一行目\n\n[00:05.00]五秒からの二行目\n[00:10.00]十秒からの三行目\n', 'utf8')],
+  ['browser_fixture_lyrics_2222222222', Buffer.from('[00:00.00]二曲目のテスト歌詞\n\n[00:06.00]段落を分けた二行目\n[00:12.00]最後のテスト行\n', 'utf8')],
+]);
+const lyricFiles = [...lyricBodies].map(([id, body], index) => ({
+  id, name: files[index].name.replace(/\.mp3$/i, '.lrc'), mimeType: 'text/plain',
+  size: String(body.length), md5Checksum: createHash('md5').update(body).digest('hex'),
+  parents: [albumId], trashed: false, modifiedTime: '2026-10-28T00:00:00Z',
+}));
+const entries = [...folders, ...files, ...lyricFiles];
+
 setDriveMock(() => ({
   files: {
-    async list() {
-      return { data: { files } };
+    async list({ q }) {
+      const parent = /^'([A-Za-z0-9_-]+)' in parents/.exec(q)?.[1];
+      if (!parent) throw new Error('Fixture requires a parent-restricted query');
+      return { data: { files: entries.filter(entry => entry.parents.includes(parent) && !entry.trashed) } };
     },
     async get({ fileId }) {
-      const file = files.find((entry) => entry.id === fileId);
-      if (!file) throw new Error('Unknown fixture file');
+      const file = entries.find((entry) => entry.id === fileId);
+      if (!file) throw Object.assign(new Error('Unknown fixture file'), { code: 404 });
       return { data: file };
     },
   },
@@ -68,10 +87,16 @@ globalThis.fetch = async (input, init) => {
   if (url.origin !== 'https://www.googleapis.com' || !url.pathname.startsWith('/drive/v3/files/')) {
     return nativeFetch(input, init);
   }
-  const headers = new Headers({ 'Content-Type': 'audio/mpeg', 'Accept-Ranges': 'bytes' });
+  const fileId = url.pathname.split('/').pop();
+  const file = entries.find(entry => entry.id === fileId);
+  if (!file || !['audio/mpeg', 'text/plain'].includes(file.mimeType) || url.searchParams.get('alt') !== 'media') return new Response(null, { status: 404 });
+  if (new Headers(init?.headers).get('Authorization') !== 'Bearer browser-fixture-token') return new Response(null, { status: 403 });
+  const payload = file.mimeType === 'text/plain' ? lyricBodies.get(fileId) : audioFixture;
+  if (!payload) return new Response(null, { status: 404 });
+  const headers = new Headers({ 'Content-Type': file.mimeType, 'Accept-Ranges': 'bytes' });
   const range = new Headers(init?.headers).get('Range');
   let start = 0;
-  let end = audioFixture.length - 1;
+  let end = payload.length - 1;
   if (range) {
     const match = /^bytes=(\d*)-(\d*)$/.exec(range);
     if (!match) return new Response(null, { status: 416 });
@@ -79,15 +104,15 @@ globalThis.fetch = async (input, init) => {
       start = Number(match[1]);
       if (match[2]) end = Math.min(Number(match[2]), end);
     } else {
-      start = Math.max(0, audioFixture.length - Number(match[2]));
+      start = Math.max(0, payload.length - Number(match[2]));
     }
-    if (start > end || start >= audioFixture.length) {
-      headers.set('Content-Range', `bytes */${audioFixture.length}`);
+    if (start > end || start >= payload.length) {
+      headers.set('Content-Range', `bytes */${payload.length}`);
       return new Response(null, { status: 416, headers });
     }
-    headers.set('Content-Range', `bytes ${start}-${end}/${audioFixture.length}`);
+    headers.set('Content-Range', `bytes ${start}-${end}/${payload.length}`);
   }
-  const body = audioFixture.subarray(start, end + 1);
+  const body = payload.subarray(start, end + 1);
   headers.set('Content-Length', String(body.length));
   return new Response(init?.method === 'HEAD' ? null : body, {
     status: range ? 206 : 200,
@@ -95,8 +120,8 @@ globalThis.fetch = async (input, init) => {
   });
 };
 
-const names = ['login', 'session', 'logout', 'list', 'stream'];
-const handlers = Object.fromEntries(
+const names = ['login', 'session', 'logout', 'list', 'stream', 'albums', 'lyrics'];
+export const handlers = Object.fromEntries(
   await Promise.all(names.map(async (name) => [name, await loadFunction(name, { directory: 'api', webExport: true })]))
 );
 const types = {
@@ -106,6 +131,7 @@ const types = {
   '.json': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.webmanifest': 'application/manifest+json',
 };
@@ -113,7 +139,7 @@ const types = {
 const server = createServer(async (incoming, outgoing) => {
   try {
     const url = new URL(incoming.url ?? '/', origin);
-    const functionName = /^\/(?:api|\.netlify\/functions)\/(login|session|logout|list|stream)(?:\/|$)/.exec(url.pathname)?.[1];
+    const functionName = /^\/(?:api|\.netlify\/functions)\/(login|session|logout|list|stream|albums|lyrics)(?:\/|$)/.exec(url.pathname)?.[1];
     let response;
     if (functionName) {
       const abort = new AbortController();
@@ -168,6 +194,7 @@ const server = createServer(async (incoming, outgoing) => {
     outgoing.end('Local test server error');
   }
 });
-server.listen(port, host, () => {
-  console.log(`Test-only browser preview: ${origin}`);
-});
+// API-only import lets Node verify the same fixtures without opening a port.
+if (process.env.DRIVE_FIXTURE_API_ONLY !== '1') {
+  server.listen(port, host, () => { console.log(`Test-only browser preview: ${origin}`); });
+}

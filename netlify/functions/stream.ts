@@ -1,5 +1,5 @@
 import { requireSession } from './_auth.js';
-import { getDrive, getFolderId } from './_drive.js';
+import { DriveLibrary, libraryError } from './_library.js';
 import { methodNotAllowed, privateResponse } from './_http.js';
 
 function validRange(range: string): boolean {
@@ -15,8 +15,6 @@ async function handleStream(req: Request): Promise<Response> {
   if (req.method !== 'GET' && req.method !== 'HEAD') return methodNotAllowed('GET, HEAD');
   const auth = requireSession(req);
   if (auth instanceof Response) return auth;
-  const folderId = getFolderId();
-  if (!folderId) return privateResponse('Service unavailable', 503);
   const fileId = new URL(req.url).pathname.split('/').pop() ?? '';
   if (!/^[A-Za-z0-9_-]{1,200}$/.test(fileId)) return privateResponse('Invalid file ID', 400);
   const range = req.headers.get('range');
@@ -25,27 +23,9 @@ async function handleStream(req: Request): Promise<Response> {
   }
 
   try {
-    const drive = getDrive();
-    const meta = await drive.files.get({
-      fileId,
-      fields: 'id,mimeType,size,parents,trashed',
-      alt: 'json',
-    });
-    if (
-      meta.data.trashed !== false ||
-      meta.data.mimeType !== 'audio/mpeg' ||
-      !meta.data.parents?.includes(folderId)
-    ) {
-      return privateResponse('Not found', 404);
-    }
-
-    const client = drive.context._options.auth;
-    if (!client || typeof client !== 'object' || !('getAccessToken' in client)) {
-      return privateResponse('Service unavailable', 503);
-    }
-    const access = await client.getAccessToken();
-    const token = typeof access === 'string' ? access : access?.token;
-    if (!token) return privateResponse('Service unavailable', 503);
+    const library = new DriveLibrary();
+    await library.audio(fileId);
+    const token = await library.accessToken();
     const upstream = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
     // A full, explicitly saved song can take longer than 30 seconds on mobile.
     // One shared deadline bounds retries and the streamed body below Vercel's 300s limit.
@@ -85,8 +65,8 @@ async function handleStream(req: Request): Promise<Response> {
       if (length) headers.set('content-length', length);
     }
     return privateResponse(req.method === 'HEAD' ? null : res.body, res.status, headers);
-  } catch {
-    return privateResponse(req.method === 'HEAD' ? null : 'Unable to load audio', 502);
+  } catch (error) {
+    return libraryError(error);
   }
 }
 

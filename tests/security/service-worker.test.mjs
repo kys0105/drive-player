@@ -258,3 +258,106 @@ test('revocation works in memory even if storage becomes inaccessible and never 
   assert.equal((await worker.fetch()).status, 401);
   assert.equal(worker.state.mediaCalls, before);
 });
+
+test('legacy saved metadata gains album and lyrics without downloading, duplicating or rewriting audio', async () => {
+  const worker = await createWorker(); await worker.sync(); await worker.save();
+  await worker.message({ type: 'SAVE_CATALOG', cacheScope: scopeA, tracks: [track] });
+  const media = await worker.caches.open(`audio-private-v3:${scopeA}`);
+  const beforeKeys = (await media.keys()).map(request => request.url);
+  let audioPuts = 0;
+  worker.state.beforePut = async name => { if (name.startsWith('audio-private-v3:')) audioPuts++; };
+  const fresh = { ...track, albumId: 'album_A', fileName: 'Example_demo.mp3', lyrics: { id: 'lyrics_file_1234567890', ver: 'lyrics_v1', format: 'lrc' } };
+  assert.equal((await worker.message({ type: 'MIGRATE_SAVED_TRACKS', cacheScope: scopeA, tracks: [fresh] })).migrated, true);
+  const meta = await worker.caches.open('drive-private-state-v3');
+  const savedUrl = `${origin}/__private__/saved/${scopeA}`;
+  const saved = await (await meta.match(savedUrl)).json();
+  assert.equal(saved[0].albumId, 'album_A');
+  assert.equal(saved[0].lyrics.id, fresh.lyrics.id);
+  assert.equal(saved[0].savedUrl, url);
+  const legacyCatalog = await (await meta.match(`${origin}/__private__/catalog/${scopeA}`)).json();
+  assert.equal(legacyCatalog[0].albumId, 'album_A');
+  const updatedLyrics = { ...fresh, lyrics: { ...fresh.lyrics, ver: 'lyrics_v2' } };
+  await worker.message({ type: 'MIGRATE_SAVED_TRACKS', cacheScope: scopeA, tracks: [updatedLyrics] });
+  assert.equal((await (await meta.match(savedUrl)).json())[0].lyrics.ver, 'lyrics_v2');
+  assert.deepEqual((await media.keys()).map(request => request.url), beforeKeys);
+  assert.equal(audioPuts, 0);
+  worker.state.offline = true;
+  assert.equal(await (await worker.fetch()).text(), '0123456789');
+  assert.equal(worker.state.mediaCalls, 0);
+});
+
+test('an updated audio version cannot relabel an older completed saved file', async () => {
+  const worker = await createWorker(); await worker.sync(); await worker.save();
+  await worker.message({ type: 'MIGRATE_SAVED_TRACKS', cacheScope: scopeA, tracks: [{ ...track, ver: 'version2', albumId: 'album_A', lyrics: { id: 'new-lyrics', ver: 'v2', format: 'txt' } }] });
+  const meta = await worker.caches.open('drive-private-state-v3');
+  const saved = await (await meta.match(`${origin}/__private__/saved/${scopeA}`)).json();
+  assert.equal(saved[0].ver, 'version1'); assert.equal(saved[0].albumId, undefined); assert.equal(saved[0].lyrics, undefined);
+  const media = await worker.caches.open(`audio-private-v3:${scopeA}`);
+  assert.equal((await media.keys()).length, 1);
+});
+
+test('separate album catalogs and a single scope audio store remain available offline', async () => {
+  const worker = await createWorker(); await worker.sync();
+  const a = { ...track, albumId: 'album_A' };
+  const b = { ...track, id: 'second_audio_file_1234567890', title: 'Second', ver: 'versionB', albumId: 'album_B' };
+  const urlB = `${origin}/api/stream/${b.id}?v=${b.ver}`;
+  const snapshot = { albums: [{ id: 'album_A', name: '3rd album' }, { id: 'album_B', name: 'Another album' }], defaultAlbumId: 'album_A' };
+  assert.equal((await worker.message({ type: 'SAVE_LIBRARY', cacheScope: scopeA, snapshot })).saved, true);
+  for (const item of [a, b]) {
+    assert.equal((await worker.message({ type: 'SAVE_CATALOG', cacheScope: scopeA, albumId: item.albumId, tracks: [item] })).saved, true);
+    assert.equal((await worker.message({ type: 'STORE_TRACK', cacheScope: scopeA, url: `${origin}/api/stream/${item.id}?v=${item.ver}`, track: item, blob: new Blob(['0123456789'], { type: 'audio/mpeg' }) })).saved, true);
+  }
+  const meta = await worker.caches.open('drive-private-state-v3');
+  assert.deepEqual(await (await meta.match(`${origin}/__private__/library/${scopeA}`)).json(), snapshot);
+  assert.equal((await (await meta.match(`${origin}/__private__/catalog/album_A/${scopeA}`)).json())[0].id, a.id);
+  assert.equal((await (await meta.match(`${origin}/__private__/catalog/album_B/${scopeA}`)).json())[0].id, b.id);
+  worker.state.offline = true;
+  assert.equal((await worker.fetch()).status, 200);
+  const second = await worker.dispatch('fetch', { request: new Request(urlB, { headers: { Range: 'bytes=2-4' } }) });
+  assert.equal(second.status, 206); assert.equal(await second.text(), '234');
+  assert.equal(worker.state.sessionCalls, 1); assert.equal(worker.state.mediaCalls, 0);
+  await worker.message({ type: 'DELETE_TRACK', cacheScope: scopeA, url });
+  const firstMissing = await worker.fetch(); assert.equal(firstMissing.status, 503);
+  assert.equal((await worker.dispatch('fetch', { request: new Request(urlB) })).status, 200);
+});
+
+test('logout and scope changes remove all album catalogs and the library snapshot', async () => {
+  for (const action of ['logout', 'scope-change']) {
+    const worker = await createWorker(); await worker.sync();
+    await worker.message({ type: 'SAVE_LIBRARY', cacheScope: scopeA, snapshot: { albums: [{ id: 'album_A', name: 'A' }, { id: 'album_B', name: 'B' }], defaultAlbumId: 'album_A' } });
+    for (const albumId of ['album_A', 'album_B']) await worker.message({ type: 'SAVE_CATALOG', cacheScope: scopeA, albumId, tracks: [{ ...track, albumId }] });
+    await worker.message({ type: 'SAVE_CATALOG', cacheScope: scopeA, tracks: [track] });
+    if (action === 'logout') await worker.message({ type: 'CLEAR_PRIVATE_AUDIO' });
+    else { worker.state.scope = scopeB; await worker.sync(); }
+    const meta = await worker.caches.open('drive-private-state-v3');
+    assert.equal((await meta.keys()).some(request => new URL(request.url).pathname.endsWith('/' + scopeA)), false, action);
+  }
+});
+
+test('metadata waiting for a lease cannot be resurrected after logout', { timeout: 10000 }, async () => {
+  for (const type of ['SAVE_CATALOG', 'SAVE_LIBRARY', 'MIGRATE_SAVED_TRACKS']) {
+    const worker = await createWorker(); await worker.sync(); await worker.save();
+    worker.state.now += 2000;
+    let started, release;
+    const ready = new Promise(resolve => { started = resolve; });
+    const wait = new Promise(resolve => { release = resolve; });
+    worker.state.beforePut = async (name, request) => {
+      if (name === 'drive-private-state-v3' && String(request).endsWith('/lease')) { started(); await wait; }
+    };
+    const pending = worker.message({ type, cacheScope: scopeA, albumId: 'album_A', tracks: [{ ...track, albumId: 'album_A' }], snapshot: { albums: [{ id: 'album_A', name: 'A' }], defaultAlbumId: 'album_A' } });
+    await ready;
+    const clearing = worker.message({ type: 'CLEAR_PRIVATE_AUDIO' });
+    release();
+    const [result] = await Promise.all([pending, clearing]);
+    assert.ok(result.error, type);
+    const meta = await worker.caches.open('drive-private-state-v3');
+    assert.equal((await meta.keys()).some(request => /\/(?:catalog|library|saved)\//.test(new URL(request.url).pathname)), false, type);
+  }
+});
+
+test('a catalog cannot be filed under a different album or without the active scope', async () => {
+  const worker = await createWorker(); await worker.sync();
+  assert.ok((await worker.message({ type: 'SAVE_CATALOG', cacheScope: scopeA, albumId: 'album_B', tracks: [{ ...track, albumId: 'album_A' }] })).error);
+  assert.ok((await worker.message({ type: 'SAVE_LIBRARY', cacheScope: scopeB, snapshot: { albums: [{ id: 'album_A', name: 'A' }], defaultAlbumId: 'album_A' } })).error);
+  assert.ok((await worker.message({ type: 'SAVE_LIBRARY', cacheScope: scopeA, snapshot: { albums: [{ id: 'album_A', name: 'A' }], defaultAlbumId: 'missing' } })).error);
+});

@@ -103,12 +103,16 @@ beforeEach(() => {
     driveCalls++;
     return {
       files: {
-        async get() {
-          return { data: metadata };
+        async get({ fileId: requestedId }) {
+          return { data: requestedId === folderId ? { id: folderId, name: '試聴用', mimeType: 'application/vnd.google-apps.folder', trashed: false } : metadata };
         },
         async list(args) {
           listArgs = args;
-          return { data: { files: [{ ...metadata, md5Checksum: 'file-version' }] } };
+          return { data: { files: [
+            { ...metadata, md5Checksum: 'file-version' },
+            { id: 'not_audio_fixture', name: 'ignore.pdf', mimeType: 'application/pdf', parents: [folderId], trashed: false },
+            { id: 'outside_audio_fixture', name: 'outside.mp3', mimeType: 'audio/mpeg', parents: ['outside_fixture'], trashed: false },
+          ] } };
         },
       },
       context: {
@@ -436,8 +440,9 @@ test('authenticated list requests filter by the configured folder and audio MIME
   assertPrivate(assert, response);
   assert.match(listArgs.q, new RegExp(`'${folderId}' in parents`));
   assert.match(listArgs.q, /trashed\s*=\s*false/);
-  assert.match(listArgs.q, /mimeType\s*=\s*'audio\/mpeg'/);
   const result = await response.json();
+  assert.equal(result.tracks.length, 1);
+  assert.equal(result.tracks[0].mimeType, 'audio/mpeg');
   assert.equal(result.tracks[0].id, fileId);
   assert.equal(result.tracks[0].ver, 'file-version');
 });
