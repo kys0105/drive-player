@@ -46,6 +46,20 @@ async function browserModule(entry, overrides = {}) {
 }
 function onlineSession() { return Response.json({ authenticated: true, expiresAt: Math.floor(now / 1000) + 3600, cacheScope: scope, serverTime: Math.floor(now / 1000), offlineUntil: Math.floor(now / 1000) + 30 * 86400 }); }
 
+function cachedMetadata() {
+  const entries = new Map();
+  return {
+    set(kind, value, albumId, cacheScope = scope) {
+      const album = albumId === undefined ? '' : '/' + encodeURIComponent(albumId);
+      entries.set(`https://player.example/__private__/${kind}${album}/${encodeURIComponent(cacheScope)}`, value);
+    },
+    caches: { async open(name) {
+      assert.equal(name, 'drive-private-state-v3');
+      return { async match(input) { const key = typeof input === 'string' ? input : input.url; return entries.has(key) ? Response.json(entries.get(key)) : undefined; } };
+    } },
+  };
+}
+
 test('a successful online response establishes a separate 30-day allowance without extending the Cookie', async () => {
   const { api, state } = await browserModule('src/utils/session.ts');
   const session = await api.readSession(onlineSession());
@@ -228,4 +242,69 @@ test('cancelling while SYNC_SESSION has not replied returns AbortError without s
   await assert.rejects(saving, error => error.name === 'AbortError');
   assert.equal(state.fetches, 0);
   assert.equal(state.workerMessages.some(message => message.type === 'STORE_TRACK'), false);
+});
+
+test('legacy unassigned catalog falls back only to the persisted default album', async () => {
+  const saved = cachedMetadata();
+  const snapshot = { albums: [{ id: 'album_A', name: '3rd album' }, { id: 'album_B', name: 'Another album' }], defaultAlbumId: 'album_A' };
+  saved.set('library', snapshot);
+  saved.set('catalog', [track]);
+  const { api } = await browserModule('src/utils/cache.ts', { caches: saved.caches });
+  const library = await api.loadLibrary(scope);
+  assert.equal(library.defaultAlbumId, 'album_A'); assert.equal(library.albums.length, 2);
+  const old = await api.loadCatalog(scope);
+  assert.equal(old[0].id, track.id); assert.equal(old[0].albumId, undefined);
+  const migrated = await api.loadCatalog(scope, 'album_A');
+  assert.equal(migrated[0].id, track.id); assert.equal(migrated[0].albumId, 'album_A');
+  assert.equal((await api.loadCatalog(scope, 'album_B')).length, 0);
+  assert.equal((await api.loadCatalog(scope, 'unfetched_album')).length, 0);
+  assert.equal((await api.loadCatalog('another-scope-1234567890', 'album_A')).length, 0);
+});
+
+test('offline album catalogs are independent and an explicitly empty album never revives old songs', async () => {
+  const saved = cachedMetadata();
+  const other = { ...track, id: 'second_audio_id', title: 'Second', albumId: 'album_B' };
+  saved.set('library', { albums: [{ id: 'album_A', name: 'A' }, { id: 'album_B', name: 'B' }], defaultAlbumId: 'album_A' });
+  saved.set('catalog', [track]);
+  saved.set('catalog', [], 'album_A');
+  saved.set('catalog', [other], 'album_B');
+  const { api } = await browserModule('src/utils/cache.ts', { caches: saved.caches });
+  assert.equal((await api.loadCatalog(scope, 'album_A')).length, 0);
+  assert.equal((await api.loadCatalog(scope, 'album_B'))[0].id, other.id);
+  assert.equal((await api.loadCatalog(scope))[0].id, track.id);
+});
+
+test('legacy catalog with identified albums exposes only the matching folder and unassigned default songs', async () => {
+  const saved = cachedMetadata();
+  saved.set('library', { albums: [{ id: 'album_A', name: 'A' }, { id: 'album_B', name: 'B' }], defaultAlbumId: 'album_A' });
+  const a = { ...track, id: 'a', albumId: 'album_A' };
+  const b = { ...track, id: 'b', albumId: 'album_B' };
+  const legacy = { ...track, id: 'legacy' };
+  saved.set('catalog', [a, b, legacy]);
+  const { api } = await browserModule('src/utils/cache.ts', { caches: saved.caches });
+  assert.deepEqual(Array.from(await api.loadCatalog(scope, 'album_A'), item => item.id), ['a', 'legacy']);
+  assert.deepEqual(Array.from(await api.loadCatalog(scope, 'album_B'), item => item.id), ['b']);
+  assert.equal((await api.loadCatalog(scope, 'album_C')).length, 0);
+});
+
+test('without a library snapshot old data remains available only through the legacy API', async () => {
+  const saved = cachedMetadata(); saved.set('catalog', [track]);
+  const { api } = await browserModule('src/utils/cache.ts', { caches: saved.caches });
+  assert.equal((await api.loadLibrary(scope)).albums.length, 0);
+  assert.equal((await api.loadCatalog(scope)).length, 1);
+  assert.equal((await api.loadCatalog(scope, 'album_A')).length, 0);
+});
+
+test('catalog presence distinguishes explicit empty, missing, and legacy fallback snapshots', async () => {
+  const saved = cachedMetadata();
+  saved.set('library', { albums: [{ id: 'album_A', name: 'A' }, { id: 'album_B', name: 'B' }], defaultAlbumId: 'album_A' });
+  saved.set('catalog', [track]);
+  saved.set('catalog', [], 'album_B');
+  const { api } = await browserModule('src/utils/cache.ts', { caches: saved.caches });
+  assert.equal(await api.hasCatalog(scope), true);
+  assert.equal(await api.hasCatalog(scope, 'album_A'), false);
+  assert.equal((await api.loadCatalog(scope, 'album_A')).length, 1);
+  assert.equal(await api.hasCatalog(scope, 'album_B'), true);
+  assert.equal((await api.loadCatalog(scope, 'album_B')).length, 0);
+  assert.equal(await api.hasCatalog(scope, 'unfetched_album'), false);
 });

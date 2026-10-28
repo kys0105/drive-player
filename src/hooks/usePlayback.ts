@@ -8,6 +8,7 @@ type Options = {
   tracks: Track[];
   offline: boolean;
   savedIds: Set<string>;
+  isSaved?: (track: Track) => boolean;
   onSessionExpired: () => void;
   notify: (message: string) => void;
 };
@@ -53,11 +54,13 @@ export function usePlayback(options: Options) {
     }
   }, []);
 
-  const chooseTrack = useCallback((id: string, autoPlay = true) => {
-    const current = optionsRef.current;
+  const chooseTrack = useCallback((id: string, autoPlay = true, queue?: Track[]) => {
+    const current = queue ? { ...optionsRef.current, tracks: queue } : optionsRef.current;
+    // The queue and native play() change inside the same user gesture on mobile.
+    if (queue) optionsRef.current = current;
     const track = current.tracks.find((item) => item.id === id);
     if (!track) return;
-    if (current.offline && !current.savedIds.has(id)) {
+    if (current.offline && !(current.isSaved ? current.isSaved(track) : current.savedIds.has(id))) {
       current.notify('この曲は端末に保存されていません。オンラインで再生してください。');
       return;
     }

@@ -1,4 +1,4 @@
-import type { Track } from '../types';
+import type { Album, LibrarySnapshot, Track } from '../types';
 import { clearLocalSession } from './session';
 
 const AUDIO_PREFIX = 'audio-private-v3:';
@@ -12,7 +12,16 @@ export function buildStreamUrl(track: Track): string {
   return `/api/stream/${encodeURIComponent(track.id)}?v=${encodeURIComponent(track.ver ?? '')}`;
 }
 function cacheName(scope: string) { return `${AUDIO_PREFIX}${encodeURIComponent(scope)}`; }
-function stateUrl(kind: string, scope: string) { return new URL(`/__private__/${kind}/${encodeURIComponent(scope)}`, location.origin).href; }
+function stateUrl(kind: string, scope: string, albumId?: string) {
+  const album = albumId === undefined ? '' : `/${encodeURIComponent(albumId)}`;
+  return new URL(`/__private__/${kind}${album}/${encodeURIComponent(scope)}`, location.origin).href;
+}
+
+function catalogTracks(value: unknown): Track[] {
+  return Array.isArray(value)
+    ? value.filter((track): track is Track => Boolean(track && typeof track.id === 'string' && typeof track.title === 'string'))
+    : [];
+}
 
 async function workerRequest(data: Record<string, unknown>, timeoutMs = 30_000, signal?: AbortSignal): Promise<Record<string, unknown>> {
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -80,17 +89,60 @@ export async function listSavedTracks(scope: string): Promise<Track[]> {
   } catch { return []; }
 }
 
-export async function loadCatalog(scope: string): Promise<Track[]> {
+export async function loadLibrary(scope: string): Promise<LibrarySnapshot> {
+  const empty = { albums: [], defaultAlbumId: null };
+  if (!('caches' in window)) return empty;
+  try {
+    const cache = await caches.open(META_CACHE);
+    const value: unknown = await (await cache.match(stateUrl('library', scope)))?.json();
+    if (!value || typeof value !== 'object' || !('albums' in value) || !Array.isArray(value.albums)) return empty;
+    const albums = value.albums.filter((album): album is Album => Boolean(album && typeof album.id === 'string' && album.id && typeof album.name === 'string'));
+    const defaultAlbumId = 'defaultAlbumId' in value && typeof value.defaultAlbumId === 'string' && albums.some(album => album.id === value.defaultAlbumId)
+      ? value.defaultAlbumId : null;
+    return { albums, defaultAlbumId };
+  } catch { return empty; }
+}
+
+export async function saveLibrary(snapshot: LibrarySnapshot, scope: string): Promise<void> {
+  await workerRequest({ type: 'SAVE_LIBRARY', cacheScope: scope, snapshot });
+}
+
+/** Exact saved snapshot presence, including an intentionally empty folder. */
+export async function hasCatalog(scope: string, albumId?: string): Promise<boolean> {
+  if (!('caches' in window)) return false;
+  try {
+    const cache = await caches.open(META_CACHE);
+    const value: unknown = await (await cache.match(stateUrl('catalog', scope, albumId)))?.json();
+    return Array.isArray(value);
+  } catch { return false; }
+}
+
+export async function loadCatalog(scope: string, albumId?: string): Promise<Track[]> {
   if (!('caches' in window)) return [];
   try {
     const cache = await caches.open(META_CACHE);
-    const value: unknown = await (await cache.match(stateUrl('catalog', scope)))?.json();
-    return Array.isArray(value) ? value.filter(track => track && typeof track.id === 'string' && typeof track.title === 'string') as Track[] : [];
+    const value: unknown = await (await cache.match(stateUrl('catalog', scope, albumId)))?.json();
+    // An explicitly saved empty folder must not resurrect the previous catalog.
+    if (Array.isArray(value)) return catalogTracks(value)
+      .filter(track => albumId === undefined || !track.albumId || track.albumId === albumId)
+      .map(track => albumId !== undefined && !track.albumId ? { ...track, albumId } : track);
+    if (albumId === undefined) return [];
+    const previous: unknown = await (await cache.match(stateUrl('catalog', scope)))?.json();
+    const library = await loadLibrary(scope);
+    return catalogTracks(previous)
+      .filter(track => track.albumId === albumId || (!track.albumId && library.defaultAlbumId === albumId))
+      .map(track => track.albumId ? track : { ...track, albumId });
   } catch { return []; }
 }
 
-export async function saveCatalog(tracks: Track[], scope: string): Promise<void> {
-  await workerRequest({ type: 'SAVE_CATALOG', cacheScope: scope, tracks });
+export async function saveCatalog(tracks: Track[], scope: string, albumId?: string): Promise<void> {
+  await workerRequest({ type: 'SAVE_CATALOG', cacheScope: scope, tracks, albumId });
+}
+
+/** Enrich metadata only. The same ID/version audio body and URL are retained. */
+export async function migrateSavedTracks(tracks: Track[], scope: string): Promise<void> {
+  if (!tracks.length) return;
+  await workerRequest({ type: 'MIGRATE_SAVED_TRACKS', cacheScope: scope, tracks });
 }
 
 export async function deleteSavedTrack(track: Track, scope: string): Promise<void> {

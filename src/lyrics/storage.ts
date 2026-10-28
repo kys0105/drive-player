@@ -1,7 +1,11 @@
 import { parseLyrics, type ParsedLyrics } from './parse.ts';
+import type { LyricsAsset } from '../types.ts';
 
 export type LyricsIdentity = { scope: string; trackId: string; version: string };
 export type StoredLyrics = LyricsIdentity & { text: string; updatedAt: number; lyrics: ParsedLyrics };
+export type DriveLyricsIdentity = Pick<LyricsIdentity, 'scope' | 'trackId'>;
+export type StoredDriveLyrics = DriveLyricsIdentity & { asset: LyricsAsset; text: string; updatedAt: number; lyrics: ParsedLyrics };
+type DriveRecordData = DriveLyricsIdentity & { key: string; source: 'drive'; asset: LyricsAsset; text: string; updatedAt: number };
 type RecordData = LyricsIdentity & { key: string; text: string; updatedAt: number };
 type Epoch = { all: number; scope: number; record: number };
 type ClearListener = (scope?: string) => void;
@@ -38,6 +42,14 @@ function isCurrent(identity: LyricsIdentity, epoch: Epoch) {
 
 function expiredOperation() {
   return new Error('ログイン状態が変更されたため、歌詞を保存できませんでした。');
+}
+
+/** Capture before starting network/file reads so a completed logout cannot be undone by a late write. */
+export function createLyricsScopeGuard(scope: string): () => boolean {
+  lyricsIdentityKey({ scope, trackId: 'guard', version: '' });
+  const all = allEpoch;
+  const scoped = scopeEpochs.get(scope) ?? 0;
+  return () => !pendingAll && !(pendingScopes.get(scope) ?? 0) && all === allEpoch && scoped === (scopeEpochs.get(scope) ?? 0);
 }
 
 function announceClear(scope?: string) {
@@ -145,6 +157,64 @@ export async function removeStoredLyrics(identity: LyricsIdentity): Promise<void
   recordEpochs.set(key, (recordEpochs.get(key) ?? 0) + 1);
   const db = await openDatabase();
   await requestResult(db, 'readwrite', (store) => store.delete(key));
+}
+
+function driveKey(identity: DriveLyricsIdentity) {
+  lyricsIdentityKey({ ...identity, version: '' });
+  // The four-part key cannot collide with the legacy three-part local key.
+  return JSON.stringify(['drive', identity.scope, identity.trackId, 'lyrics']);
+}
+
+export function validLyricsAsset(value: unknown): value is LyricsAsset {
+  if (!value || typeof value !== 'object') return false;
+  const asset = value as Partial<LyricsAsset>;
+  return typeof asset.id === 'string' && asset.id.length > 0 && asset.id.length <= 1_024 &&
+    typeof asset.ver === 'string' && asset.ver.length <= 2_048 && (asset.format === 'lrc' || asset.format === 'txt');
+}
+
+export async function getStoredDriveLyrics(identity: DriveLyricsIdentity, expectedAsset?: LyricsAsset): Promise<StoredDriveLyrics | null> {
+  const key = driveKey(identity);
+  const allowed = createLyricsScopeGuard(identity.scope);
+  const revision = recordEpochs.get(key) ?? 0;
+  const db = await openDatabase();
+  if (!allowed()) return null;
+  const value: unknown = await requestResult(db, 'readonly', (store) => store.get(key));
+  if (!allowed() || revision !== (recordEpochs.get(key) ?? 0) || !value || typeof value !== 'object') return null;
+  const record = value as Partial<DriveRecordData>;
+  if (record.key !== key || record.source !== 'drive' || record.scope !== identity.scope || record.trackId !== identity.trackId ||
+      !validLyricsAsset(record.asset) || typeof record.text !== 'string' || typeof record.updatedAt !== 'number' || !Number.isFinite(record.updatedAt)) return null;
+  if (expectedAsset && (record.asset.id !== expectedAsset.id || record.asset.ver !== expectedAsset.ver || record.asset.format !== expectedAsset.format)) return null;
+  try {
+    const lyrics = parseLyrics(record.text);
+    return lyrics.lines.length ? { ...identity, asset: record.asset, text: record.text, updatedAt: record.updatedAt, lyrics } : null;
+  } catch { return null; }
+}
+
+export async function saveStoredDriveLyrics(identity: DriveLyricsIdentity, asset: LyricsAsset, text: string, stillAllowed: () => boolean = () => true): Promise<StoredDriveLyrics> {
+  const key = driveKey(identity);
+  if (!validLyricsAsset(asset)) throw new Error('Driveの歌詞情報を確認してください。');
+  const lyrics = parseLyrics(text);
+  if (!lyrics.lines.length) throw new Error('Driveの歌詞ファイルに本文がありません。');
+  const scopeAllowed = createLyricsScopeGuard(identity.scope);
+  const revision = recordEpochs.get(key) ?? 0;
+  const allowed = () => stillAllowed() && scopeAllowed() && revision === (recordEpochs.get(key) ?? 0);
+  if (!allowed()) throw expiredOperation();
+  const db = await openDatabase();
+  if (!allowed()) throw expiredOperation();
+  const updatedAt = Date.now();
+  await requestResult(db, 'readwrite', store => store.put({ ...identity, key, source: 'drive', asset, text, updatedAt } satisfies DriveRecordData));
+  if (!allowed()) throw expiredOperation();
+  return { ...identity, asset, text, updatedAt, lyrics };
+}
+
+export async function removeStoredDriveLyrics(identity: DriveLyricsIdentity, stillAllowed: () => boolean = () => true): Promise<void> {
+  const key = driveKey(identity);
+  const allowed = createLyricsScopeGuard(identity.scope);
+  if (!allowed() || !stillAllowed()) throw expiredOperation();
+  recordEpochs.set(key, (recordEpochs.get(key) ?? 0) + 1);
+  const db = await openDatabase();
+  if (!allowed() || !stillAllowed()) throw expiredOperation();
+  await requestResult(db, 'readwrite', store => store.delete(key));
 }
 
 async function clearData(scope: string | undefined, broadcast: boolean): Promise<void> {

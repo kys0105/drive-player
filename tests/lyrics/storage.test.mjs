@@ -34,7 +34,7 @@ async function putRaw(record) {
 
 test('lyrics persist as source text and reparse on a later read', async () => {
   const saved = await saveStoredLyrics(identity, '[00:01.50]本物の入力');
-  assert.deepEqual(saved.lyrics, { synced: true, lines: [{ time: 1.5, text: '本物の入力' }] });
+  assert.deepEqual(saved.lyrics, { synced: true, fullText: '本物の入力', lines: [{ time: 1.5, text: '本物の入力' }] });
   const read = await getStoredLyrics({ ...identity });
   assert.equal(read.text, '[00:01.50]本物の入力');
   assert.deepEqual(read.lyrics, saved.lyrics);

@@ -43,8 +43,8 @@ beforeEach(() => {
   mediaRequest = null;
   setDriveMock(() => ({
     files: {
-      async get() { return { data: { id: fileId, mimeType: 'audio/mpeg', parents: [folderId], trashed: false, size: '6000000' } }; },
-      async list() { return { data: { files: [{ id: fileId, name: 'noah_track.mp3', mimeType: 'audio/mpeg', md5Checksum: 'v1' }] } }; },
+      async get({ fileId: requestedId }) { return { data: requestedId === folderId ? { id: folderId, name: '試聴用', mimeType: 'application/vnd.google-apps.folder', trashed: false } : { id: fileId, name: 'noah_track.mp3', mimeType: 'audio/mpeg', parents: [folderId], trashed: false, size: '6000000' } }; },
+      async list() { return { data: { files: [{ id: fileId, name: 'noah_track.mp3', mimeType: 'audio/mpeg', md5Checksum: 'v1', parents: [folderId], trashed: false }] } }; },
     },
     context: { _options: { auth: { async getAccessToken() { return { token: 'fixture-access-token' }; } } } },
   }));

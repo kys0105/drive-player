@@ -1,6 +1,6 @@
 export type LyricLine = { time: number | null; text: string };
 
-export type ParsedLyrics = { lines: LyricLine[]; synced: boolean };
+export type ParsedLyrics = { lines: LyricLine[]; synced: boolean; fullText: string };
 
 export const MAX_LYRIC_CHARACTERS = 200_000;
 export const MAX_LYRIC_LINES = 5_000;
@@ -8,10 +8,13 @@ const TIMESTAMP = /\[(\d{1,4}):(\d{2})(?:[.:](\d{1,3}))?\]/g;
 const METADATA = /\[(?:ar|ti|al|by|au|length|re|ve|tool|id|offset):[^\]]*\]/gi;
 
 export function parseLyrics(input: string): ParsedLyrics {
+  if (input.includes('\0')) throw new Error('歌詞をテキスト形式で保存してください。');
   if (input.length > MAX_LYRIC_CHARACTERS) {
     throw new Error('歌詞が長すぎます。20万文字以内にしてください。');
   }
   const source = input.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+  const sourceLines = source.split('\n');
+  if (sourceLines.length > MAX_LYRIC_LINES) throw new Error('歌詞の行数が多すぎます。5,000行以内にしてください。');
   let offset = 0;
   for (const match of source.matchAll(/\[offset:\s*([+-]?\d+)\s*\]/gi)) {
     const value = Number(match[1]);
@@ -20,9 +23,13 @@ export function parseLyrics(input: string): ParsedLyrics {
   }
   const timed: Array<LyricLine & { order: number }> = [];
   const plain: LyricLine[] = [];
+  const originalLines: string[] = [];
   let order = 0;
-  for (const raw of source.split('\n')) {
-    const line = raw.replace(METADATA, '').trim();
+  for (const raw of sourceLines) {
+    const withoutMetadata = raw.replace(METADATA, '');
+    const line = withoutMetadata.trim();
+    // Metadata does not create paragraphs. Actual blank lines remain in the full text.
+    if (line || !raw.trim() || withoutMetadata === raw) originalLines.push(withoutMetadata.replace(TIMESTAMP, ''));
     if (!line) continue;
     const tags = [...line.matchAll(TIMESTAMP)];
     if (!tags.length) {
@@ -45,9 +52,12 @@ export function parseLyrics(input: string): ParsedLyrics {
   if (timed.length && plain.length) {
     throw new Error('時刻付きの行と時刻のない歌詞が混在しています。全行に時刻を付けるか、時刻を外して通常のテキストとして読み込んでください。');
   }
-  if (!timed.length) return { lines: plain, synced: false };
+  while (originalLines.length && !originalLines[0].trim()) originalLines.shift();
+  while (originalLines.length && !originalLines[originalLines.length - 1].trim()) originalLines.pop();
+  const fullText = originalLines.join('\n');
+  if (!timed.length) return { lines: plain, synced: false, fullText };
   timed.sort((a, b) => (a.time ?? 0) - (b.time ?? 0) || a.order - b.order);
-  return { lines: timed.map(({ time, text }) => ({ time, text })), synced: true };
+  return { lines: timed.map(({ time, text }) => ({ time, text })), synced: true, fullText };
 }
 
 export async function readLyricsFile(file: File): Promise<string> {
