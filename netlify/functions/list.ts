@@ -1,6 +1,6 @@
-import { requireSession } from './_auth.ts';
-import { getDrive, getFolderId } from './_drive.ts';
-import { jsonResponse, methodNotAllowed, privateResponse } from './_http.ts';
+import { requireSession } from './_auth.js';
+import { getDrive, getFolderId } from './_drive.js';
+import { jsonResponse, methodNotAllowed, privateResponse } from './_http.js';
 
 function formatTitle(name: string): string {
   const underscoreIndex = name.indexOf('_');

@@ -1,5 +1,5 @@
-import { requireSession, sessionDetails } from './_auth.ts';
-import { jsonResponse, methodNotAllowed } from './_http.ts';
+import { requireSession, sessionDetails } from './_auth.js';
+import { jsonResponse, methodNotAllowed } from './_http.js';
 
 export default async function session(req: Request): Promise<Response> {
   if (req.method !== 'GET') return methodNotAllowed('GET');

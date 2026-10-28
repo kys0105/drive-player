@@ -1,6 +1,6 @@
-import { requireSession } from './_auth.ts';
-import { getDrive, getFolderId } from './_drive.ts';
-import { methodNotAllowed, privateResponse } from './_http.ts';
+import { requireSession } from './_auth.js';
+import { getDrive, getFolderId } from './_drive.js';
+import { methodNotAllowed, privateResponse } from './_http.js';
 
 function validRange(range: string): boolean {
   const parts = /^bytes=(\d{0,16})-(\d{0,16})$/.exec(range);

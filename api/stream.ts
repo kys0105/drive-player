@@ -1,5 +1,5 @@
-import stream from '../netlify/functions/stream.ts';
-import { privateResponse } from '../netlify/functions/_http.ts';
+import stream from '../netlify/functions/stream.js';
+import { privateResponse } from '../netlify/functions/_http.js';
 
 export default {
   fetch(request: Request): Promise<Response> | Response {

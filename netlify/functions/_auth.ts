@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
-import { privateResponse, rejectCrossOrigin } from './_http.ts';
+import { privateResponse, rejectCrossOrigin } from './_http.js';
 
 export const SESSION_SECONDS = 30 * 24 * 60 * 60;
 

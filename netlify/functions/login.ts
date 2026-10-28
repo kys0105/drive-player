@@ -1,6 +1,6 @@
 import type { Config } from '@netlify/functions';
-import { authUnavailable, issueSession, passwordMatches, sessionDetails } from './_auth.ts';
-import { jsonResponse, methodNotAllowed, privateResponse, rejectCrossOrigin } from './_http.ts';
+import { authUnavailable, issueSession, passwordMatches, sessionDetails } from './_auth.js';
+import { jsonResponse, methodNotAllowed, privateResponse, rejectCrossOrigin } from './_http.js';
 
 async function readPassword(req: Request): Promise<string | null> {
   if (req.headers.get('content-type')?.split(';')[0].trim() !== 'application/json' || !req.body) {
