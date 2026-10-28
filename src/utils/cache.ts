@@ -1,58 +1,179 @@
 import type { Track } from '../types';
+import { clearLocalSession } from './session';
 
-const PRIVATE_CACHE_PREFIX = 'audio-private-v2:';
-const LEGACY_CACHE_NAME = 'audio-v1';
+const AUDIO_PREFIX = 'audio-private-v3:';
+const META_CACHE = 'drive-private-state-v3';
+const activeDownloads = new Set<AbortController>();
+let generation = 0;
+type SavedTrack = Track & { savedUrl?: string };
+export type DownloadProgress = { loaded: number; total?: number };
 
-export function buildStreamUrl(t: Track): string {
-  const v = encodeURIComponent(t.ver ?? '');
-  return `/.netlify/functions/stream/${encodeURIComponent(t.id)}?v=${v}`;
+export function buildStreamUrl(track: Track): string {
+  return `/api/stream/${encodeURIComponent(track.id)}?v=${encodeURIComponent(track.ver ?? '')}`;
+}
+function cacheName(scope: string) { return `${AUDIO_PREFIX}${encodeURIComponent(scope)}`; }
+function stateUrl(kind: string, scope: string) { return new URL(`/__private__/${kind}/${encodeURIComponent(scope)}`, location.origin).href; }
+
+async function workerRequest(data: Record<string, unknown>, timeoutMs = 30_000, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  if (!('serviceWorker' in navigator)) throw new Error('このブラウザでは端末への保存を利用できません。');
+  const registration = navigator.serviceWorker.controller ? null : await new Promise<ServiceWorkerRegistration>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      signal?.removeEventListener('abort', abort);
+      callback();
+    };
+    const abort = () => finish(() => reject(new DOMException('Aborted', 'AbortError')));
+    const timeout = setTimeout(() => finish(() => reject(new Error('端末保存の準備ができません。一度ページを再読み込みしてください。'))), 8_000);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
+    try {
+      void navigator.serviceWorker.ready.then(value => finish(() => resolve(value)), error => finish(() => reject(error)));
+    } catch (error) { finish(() => reject(error)); }
+  });
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const worker = navigator.serviceWorker.controller ?? registration?.active;
+  if (!worker) throw new Error('保存の準備中です。一度ページを再読み込みしてください。');
+  return new Promise((resolve, reject) => {
+    const channel = new MessageChannel();
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      channel.port1.close();
+      signal?.removeEventListener('abort', abort);
+      callback();
+    };
+    const abort = () => finish(() => reject(new DOMException('Aborted', 'AbortError')));
+    const timeout = setTimeout(() => finish(() => reject(new Error('保存処理が応答しません。再度お試しください。'))), timeoutMs);
+    channel.port1.onmessage = event => {
+      const result = event.data;
+      finish(() => { if (result?.error) reject(new Error(String(result.error))); else resolve(result ?? {}); });
+    };
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
+    try { worker.postMessage(data, [channel.port2]); } catch (error) { finish(() => reject(error)); }
+  });
 }
 
-function cacheName(cacheScope: string): string {
-  return `${PRIVATE_CACHE_PREFIX}${encodeURIComponent(cacheScope)}`;
-}
-
-export async function hasCached(url: string, cacheScope: string): Promise<boolean> {
+export async function hasCached(url: string, scope: string): Promise<boolean> {
   if (!('caches' in window)) return false;
-  const cache = await caches.open(cacheName(cacheScope));
-  const res = await cache.match(url);
-  return res?.status === 200;
+  try {
+    const response = await (await caches.open(cacheName(scope))).match(url);
+    return response?.status === 200 && response.headers.get('X-Drive-Saved') === '1';
+  } catch { return false; }
 }
 
-export async function cleanupCache(validAbsUrls: string[], cacheScope: string) {
-  if (!('caches' in window)) return;
-  const cache = await caches.open(cacheName(cacheScope));
-  const keys = await cache.keys();
-  const valid = new Set(validAbsUrls);
-  await Promise.all(keys.map((req) => (valid.has(req.url) ? undefined : cache.delete(req))));
+export async function listSavedTracks(scope: string): Promise<Track[]> {
+  if (!('caches' in window)) return [];
+  try {
+    const cache = await caches.open(META_CACHE);
+    const value: unknown = await (await cache.match(stateUrl('saved', scope)))?.json();
+    if (!Array.isArray(value)) return [];
+    const tracks = value.filter((track): track is SavedTrack => Boolean(track && typeof track.id === 'string' && typeof track.title === 'string'));
+    const present = await Promise.all(tracks.map(track => hasCached(track.savedUrl ?? buildStreamUrl(track), scope)));
+    return tracks.filter((_, index) => present[index]);
+  } catch { return []; }
 }
 
-/** Ask the worker to finish outstanding writes before deleting private audio. */
-export async function clearPrivateAudioCache(cacheScope?: string): Promise<void> {
-  if ('serviceWorker' in navigator) {
-    const registration = await navigator.serviceWorker.getRegistration();
-    const worker = navigator.serviceWorker.controller ?? registration?.active;
-    if (worker) {
-      await new Promise<void>((resolve) => {
-        const channel = new MessageChannel();
-        const finish = () => {
-          clearTimeout(timeout);
-          channel.port1.close();
-          resolve();
-        };
-        const timeout = window.setTimeout(finish, 2000);
-        channel.port1.onmessage = finish;
-        worker.postMessage({ type: 'CLEAR_PRIVATE_AUDIO', cacheScope }, [channel.port2]);
-      });
+export async function loadCatalog(scope: string): Promise<Track[]> {
+  if (!('caches' in window)) return [];
+  try {
+    const cache = await caches.open(META_CACHE);
+    const value: unknown = await (await cache.match(stateUrl('catalog', scope)))?.json();
+    return Array.isArray(value) ? value.filter(track => track && typeof track.id === 'string' && typeof track.title === 'string') as Track[] : [];
+  } catch { return []; }
+}
+
+export async function saveCatalog(tracks: Track[], scope: string): Promise<void> {
+  await workerRequest({ type: 'SAVE_CATALOG', cacheScope: scope, tracks });
+}
+
+export async function deleteSavedTrack(track: Track, scope: string): Promise<void> {
+  await workerRequest({ type: 'DELETE_TRACK', cacheScope: scope, url: (track as SavedTrack).savedUrl ?? buildStreamUrl(track), trackId: track.id });
+}
+
+export async function downloadTrack(track: Track, scope: string, options: { signal?: AbortSignal; onProgress?: (progress: DownloadProgress) => void } = {}): Promise<void> {
+  const expected = generation;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  activeDownloads.add(controller);
+  let storing = false;
+  try {
+    if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    const sync = await workerRequest({ type: 'SYNC_SESSION' }, 30_000, controller.signal);
+    const session = sync.session as { cacheScope?: string } | null;
+    if (session?.cacheScope !== scope || expected !== generation) throw new Error('オンラインでログイン状態を確認してから保存してください。');
+    const response = await fetch(buildStreamUrl(track), {
+      credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+      headers: { 'X-Drive-Download': '1' },
+    });
+    if (response.status === 401) { await clearPrivateAudioCache(); throw new Error('ログインの有効期限が切れました。'); }
+    if (response.status !== 200 || response.headers.has('Content-Range') || !response.body || !/^audio\//.test(response.headers.get('Content-Type') ?? '')) throw new Error('音源を保存できませんでした。再試行してください。');
+    const announcedLength = Number(response.headers.get('Content-Length'));
+    const total = Number.isFinite(announcedLength) && announcedLength > 0 ? announcedLength : track.size;
+    const reader = response.body.getReader();
+    const chunks: BlobPart[] = [];
+    let loaded = 0;
+    options.onProgress?.({ loaded, total });
+    while (true) {
+      const part = await reader.read();
+      if (controller.signal.aborted || expected !== generation) { await reader.cancel(); throw new DOMException('Aborted', 'AbortError'); }
+      if (part.done) break;
+      chunks.push(part.value.slice().buffer);
+      loaded += part.value.byteLength;
+      options.onProgress?.({ loaded, total });
+    }
+    if (!loaded || (total !== undefined && loaded !== total)) throw new Error('音源の取得が途中で止まりました。もう一度保存してください。');
+    storing = true;
+    await workerRequest({ type: 'STORE_TRACK', cacheScope: scope, url: buildStreamUrl(track), track, blob: new Blob(chunks, { type: 'audio/mpeg' }) }, 120_000, controller.signal);
+    if (controller.signal.aborted || expected !== generation) {
+      await deleteSavedTrack(track, scope).catch(() => {});
+      throw new DOMException('Aborted', 'AbortError');
+    }
+    if (navigator.storage?.persist) void navigator.storage.persist().catch(() => {});
+  } catch (error) {
+    if (storing && (controller.signal.aborted || expected !== generation)) await deleteSavedTrack(track, scope).catch(() => {});
+    throw error;
+  } finally {
+    activeDownloads.delete(controller);
+    options.signal?.removeEventListener('abort', abort);
+  }
+}
+
+export async function cleanupCache(validAbsUrls: string[], scope: string): Promise<void> {
+  const valid = new Set(validAbsUrls.map(url => new URL(url, location.origin).href));
+  for (const track of await listSavedTracks(scope)) {
+    if (!valid.has(new URL((track as SavedTrack).savedUrl ?? buildStreamUrl(track), location.origin).href)) await deleteSavedTrack(track, scope);
+  }
+}
+
+/** Revoke pending downloads before acknowledging deletion; the worker serializes writes. */
+export async function clearPrivateAudioCache(scope?: string): Promise<void> {
+  generation++;
+  for (const controller of activeDownloads) controller.abort();
+  clearLocalSession();
+  let acknowledged = false;
+  try {
+    if ('serviceWorker' in navigator && (navigator.serviceWorker.controller || (await navigator.serviceWorker.getRegistration())?.active)) {
+      await workerRequest({ type: 'CLEAR_PRIVATE_AUDIO', cacheScope: scope });
+      acknowledged = true;
+    }
+  } catch { /* Direct deletion below is also needed when an older worker is installed. */ }
+  if ('caches' in window) {
+    for (const key of await caches.keys()) {
+      if (key === 'audio-v1' || key.startsWith('audio-private-v2:') || key.startsWith(AUDIO_PREFIX) || (!acknowledged && key === META_CACHE)) await caches.delete(key);
     }
   }
-  // Also clean up installations still using the previous worker.
-  if ('caches' in window) {
-    const keys = await caches.keys();
-    await Promise.all(
-      keys
-        .filter((key) => key === LEGACY_CACHE_NAME || key.startsWith(PRIVATE_CACHE_PREFIX))
-        .map((key) => caches.delete(key))
-    );
-  }
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith('drive-player.catalog.') || key.startsWith('drive-player.lyrics.') || key.startsWith('drive-player.order.')) localStorage.removeItem(key);
+    }
+  } catch { /* Optional local metadata. */ }
 }

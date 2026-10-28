@@ -1,0 +1,37 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "regions": ["hnd1"],
+  "functions": {
+    "api/*.ts": { "maxDuration": 300, "supportsCancellation": true }
+  },
+  "rewrites": [
+    { "source": "/api/stream/:fileId", "destination": "/api/stream?fileId=:fileId" },
+    { "source": "/.netlify/functions/stream/:fileId", "destination": "/api/stream?fileId=:fileId" },
+    { "source": "/.netlify/functions/login", "destination": "/api/login" },
+    { "source": "/.netlify/functions/session", "destination": "/api/session" },
+    { "source": "/.netlify/functions/logout", "destination": "/api/logout" },
+    { "source": "/.netlify/functions/list", "destination": "/api/list" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "same-origin" },
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "Content-Security-Policy", "value": "frame-ancestors 'none'" }
+      ]
+    },
+    {
+      "source": "/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-store" }]
+    },
+    {
+      "source": "/index.html",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    }
+  ]
+}

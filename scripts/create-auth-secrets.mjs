@@ -31,7 +31,7 @@ async function main() {
   let password;
   let confirmation;
   try {
-    process.stdout.write('新しいパスワード（16文字以上、入力は非表示）: ');
+    process.stdout.write('新しいパスワード（8文字以上、入力は非表示）: ');
     password = await input.question('');
     process.stdout.write('\n確認のためもう一度: ');
     confirmation = await input.question('');
@@ -39,8 +39,8 @@ async function main() {
   } finally {
     input.close();
   }
-  if (password.length < 16 || Buffer.byteLength(password) > 1024) {
-    throw new Error('パスワードは16文字以上、UTF-8で1024バイト以下にしてください。');
+  if (password.length < 8 || Buffer.byteLength(password) > 1024) {
+    throw new Error('パスワードは8文字以上、UTF-8で1024バイト以下にしてください。');
   }
   const first = Buffer.from(password);
   const second = Buffer.from(confirmation);
@@ -68,7 +68,7 @@ async function main() {
     });
   }
   console.log('APP_PASSWORD_HASH と SESSION_SECRET を .env に保存しました（値は表示しません）。');
-  console.log('Netlifyにも同名の環境変数を登録して、再デプロイしてください（設定方法はREADME参照）。');
+  console.log('Vercelの本番環境にも同名の環境変数を登録し、再デプロイしてください（README参照）。');
 }
 
 main().catch((error) => {

@@ -6,6 +6,12 @@ export const SESSION_SECONDS = 30 * 24 * 60 * 60;
 type AuthConfig = { passwordHash: string; salt: Buffer; hash: Buffer; secret: string };
 export type Session = { authenticated: true; expiresAt: number; cacheScope: string };
 
+/** An offline lease is renewed by a successful server check, not by playback. */
+export function sessionDetails(session: Session) {
+  const serverTime = Math.floor(Date.now() / 1000);
+  return { ...session, serverTime, offlineUntil: serverTime + SESSION_SECONDS };
+}
+
 function configuration(): AuthConfig | null {
   const passwordHash = process.env.APP_PASSWORD_HASH ?? '';
   const secret = process.env.SESSION_SECRET ?? '';

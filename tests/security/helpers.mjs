@@ -5,10 +5,10 @@ const projectRoot = fileURLToPath(new URL('../../', import.meta.url));
 const driveMockKey = Symbol.for('drive-player.security.mockDrive');
 
 /** Bundle the production entry point, replacing only the external Drive client. */
-export async function loadFunction(name) {
+export async function loadFunction(name, { directory = 'netlify/functions', webExport = false } = {}) {
   const result = await build({
     absWorkingDir: projectRoot,
-    entryPoints: [`netlify/functions/${name}.ts`],
+    entryPoints: [`${directory}/${name}.ts`],
     bundle: true,
     write: false,
     platform: 'node',
@@ -35,7 +35,7 @@ export async function loadFunction(name) {
     `${result.outputFiles[0].text}\n//# sourceURL=security-bundle-${name}.mjs`
   ).toString('base64');
   const module = await import(`data:text/javascript;base64,${encoded}`);
-  return module.default;
+  return webExport ? module.default.fetch : module.default;
 }
 
 export function setDriveMock(factory) {

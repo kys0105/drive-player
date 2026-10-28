@@ -47,6 +47,9 @@ async function handleStream(req: Request): Promise<Response> {
     const token = typeof access === 'string' ? access : access?.token;
     if (!token) return privateResponse('Service unavailable', 503);
     const upstream = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
+    // A full, explicitly saved song can take longer than 30 seconds on mobile.
+    // One shared deadline bounds retries and the streamed body below Vercel's 300s limit.
+    const mediaDeadline = AbortSignal.timeout(270_000);
     let res: Response | undefined;
     for (let attempt = 0; attempt < 3; attempt++) {
       res = await fetch(upstream, {
@@ -57,7 +60,7 @@ async function handleStream(req: Request): Promise<Response> {
           ...(range ? { Range: range } : {}),
         },
         redirect: 'error',
-        signal: AbortSignal.any([req.signal, AbortSignal.timeout(30_000)]),
+        signal: AbortSignal.any([req.signal, mediaDeadline]),
       });
       if (![429, 500, 502, 503, 504].includes(res.status) || attempt === 2) break;
       await res.body?.cancel();
