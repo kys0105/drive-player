@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Album, LibrarySnapshot, Track } from '../types';
+import { preferredTracks } from '../config/trackOrder';
 import { hasCatalog, listSavedTracks, loadCatalog, loadLibrary, migrateSavedTracks, saveCatalog, saveLibrary } from '../utils/cache';
 
 const legacyOffline: Album = { id: 'legacy-offline', name: '保存したライブラリ', legacy: true };
@@ -14,9 +15,9 @@ function orderTracks(tracks: Track[], scope: string, albumId: string, isDefault:
     if (order !== null) remember(key, order);
   }
   let ids: string[] = [];
-  try { const value: unknown = JSON.parse(order ?? '[]'); if (Array.isArray(value)) ids = value.filter((id): id is string => typeof id === 'string'); } catch { /* Use server order. */ }
+  try { const value: unknown = JSON.parse(order ?? '[]'); if (Array.isArray(value)) ids = value.filter((id): id is string => typeof id === 'string'); } catch { /* Use the shared default order. */ }
   const rank = new Map(ids.map((id, index) => [id, index]));
-  return [...tracks].sort((a, b) => (rank.get(a.id) ?? ids.length) - (rank.get(b.id) ?? ids.length));
+  return preferredTracks(tracks).sort((a, b) => (rank.get(a.id) ?? ids.length) - (rank.get(b.id) ?? ids.length));
 }
 function libraryValue(value: unknown): LibrarySnapshot | null {
   if (!value || typeof value !== 'object' || !('albums' in value) || !Array.isArray(value.albums)) return null;

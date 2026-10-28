@@ -19,10 +19,10 @@ const compiled = await build({
   } }],
 });
 
-async function renderLibrary({ catalogs = new Map(), saved = [], online = false, remoteCatalogs = new Map(), initialWorkerReady = true } = {}) {
+async function renderLibrary({ catalogs = new Map(), saved = [], online = false, remoteCatalogs = new Map(), initialWorkerReady = true, preferences = new Map() } = {}) {
   const slots = []; const effects = [];
   let cursor = 0, queued = false, output;
-  const storage = new Map();
+  const storage = new Map(preferences);
   const module = { exports: {} };
   const fixture = {
     library: { albums: [{ id: 'album_A', name: '3rd album' }, { id: 'album_B', name: 'Other' }], defaultAlbumId: 'album_A' },
@@ -87,7 +87,7 @@ async function renderLibrary({ catalogs = new Map(), saved = [], online = false,
   const flush = async () => { await new Promise(resolve => setImmediate(resolve)); };
   render(); await flush();
   return {
-    fixture, get current() { return output; },
+    fixture, storage, get current() { return output; },
     async select(id) { output.selectAlbum(id); await flush(); },
     async controllerChange(snapshot) {
       fixture.workerReady = true;
@@ -99,6 +99,102 @@ async function renderLibrary({ catalogs = new Map(), saved = [], online = false,
     listenerCount() { return [...workerListeners.values()].reduce((sum, listeners) => sum + listeners.size, 0); },
   };
 }
+
+const orderedTitles = ['紐', 'anchor', 'noah', 'ほしを継ぐもの', '4 Lib Isl', 'flowers3', 'milkomeda', 'ghost', '砂', '螺旋とは', 'Impulse'];
+const orderKey = albumId => `drive-player.order.test-scope-1234567890.${albumId}`;
+const legacyOrderKey = 'drive-player.order.test-scope-1234567890';
+function songs(titles, albumId = 'album_A') {
+  return titles.map(title => ({ id: `song-${orderedTitles.indexOf(title)}`, title, ver: 'v1', albumId }));
+}
+function titlesOf(hook) { return Array.from(hook.current.tracks, track => track.title); }
+
+test('a new online library follows the shared album order and includes Impulse only when present', async () => {
+  const received = songs([...orderedTitles].reverse());
+  const hook = await renderLibrary({ online: true, remoteCatalogs: new Map([['album_A', received]]) });
+  try {
+    assert.deepEqual(titlesOf(hook), orderedTitles);
+    assert.equal(hook.current.tracks.length, received.length);
+    assert.equal(hook.current.tracks.at(-1).title, 'Impulse');
+    assert.equal(hook.storage.get(orderKey('album_A')), undefined, 'default ordering must not become a frozen manual preference');
+    assert.deepEqual(received.map(track => track.title), [...orderedTitles].reverse(), 'sorting must not mutate the received catalog');
+  } finally { hook.dispose(); }
+});
+
+test('a cached offline album uses the shared order without creating a missing Impulse track', async () => {
+  const available = orderedTitles.filter(title => title !== 'Impulse');
+  const hook = await renderLibrary({ catalogs: new Map([['album_A', songs([...available].reverse())]]) });
+  try {
+    assert.deepEqual(titlesOf(hook), available);
+    assert.equal(hook.current.tracks.length, 10);
+    assert.equal(hook.current.tracks.some(track => track.title === 'Impulse'), false);
+    assert.equal(hook.fixture.albumRequests, 0);
+    assert.equal(hook.fixture.catalogRequests, 0);
+  } finally { hook.dispose(); }
+});
+
+test('manual song IDs stay first while newly available songs follow the shared default order', async () => {
+  const manual = JSON.stringify(['song-7', 'song-2']);
+  const hook = await renderLibrary({
+    online: true,
+    remoteCatalogs: new Map([['album_A', songs([...orderedTitles].reverse())]]),
+    preferences: new Map([[orderKey('album_A'), manual]]),
+  });
+  try {
+    assert.deepEqual(titlesOf(hook), ['ghost', 'noah', ...orderedTitles.filter(title => title !== 'ghost' && title !== 'noah')]);
+    assert.equal(hook.storage.get(orderKey('album_A')), manual, 'a new default must not overwrite an existing manual order');
+  } finally { hook.dispose(); }
+});
+
+test('corrupt, invalid and stale manual preferences fall back to the shared order', async () => {
+  for (const stored of ['{broken-json', '{"ids":[]}', '[null,42]', '["removed-song"]']) {
+    const hook = await renderLibrary({
+      catalogs: new Map([['album_A', songs(['ghost', 'noah', '紐'])]]),
+      preferences: new Map([[orderKey('album_A'), stored]]),
+    });
+    try { assert.deepEqual(titlesOf(hook), ['紐', 'noah', 'ghost'], stored); }
+    finally { hook.dispose(); }
+  }
+});
+
+test('a manual album preference never changes another album or another authentication scope', async () => {
+  const hook = await renderLibrary({
+    catalogs: new Map([
+      ['album_A', songs(['noah', 'ghost', '紐'])],
+      ['album_B', songs(['noah', 'ghost', '紐'], 'album_B')],
+    ]),
+    preferences: new Map([
+      [orderKey('album_A'), JSON.stringify(['song-7', 'song-0'])],
+      ['drive-player.order.some-other-scope.album_B', JSON.stringify(['song-2', 'song-7', 'song-0'])],
+    ]),
+  });
+  try {
+    assert.deepEqual(titlesOf(hook), ['ghost', '紐', 'noah']);
+    await hook.select('album_B');
+    assert.deepEqual(titlesOf(hook), ['紐', 'noah', 'ghost']);
+    await hook.select('album_A');
+    assert.deepEqual(titlesOf(hook), ['ghost', '紐', 'noah']);
+    assert.equal(hook.storage.get(orderKey('album_B')), undefined);
+  } finally { hook.dispose(); }
+});
+
+test('legacy manual order migrates only to the default album and leaves other albums on the shared default', async () => {
+  const legacy = JSON.stringify(['song-7', 'song-2']);
+  const hook = await renderLibrary({
+    catalogs: new Map([
+      ['album_A', songs(['noah', 'ghost', '紐'])],
+      ['album_B', songs(['noah', 'ghost', '紐'], 'album_B')],
+    ]),
+    preferences: new Map([[legacyOrderKey, legacy]]),
+  });
+  try {
+    assert.deepEqual(titlesOf(hook), ['ghost', 'noah', '紐']);
+    assert.equal(hook.storage.get(orderKey('album_A')), legacy);
+    await hook.select('album_B');
+    assert.deepEqual(titlesOf(hook), ['紐', 'noah', 'ghost']);
+    assert.equal(hook.storage.get(orderKey('album_B')), undefined);
+    assert.equal(hook.storage.get(legacyOrderKey), legacy);
+  } finally { hook.dispose(); }
+});
 
 test('a default album with no catalog recovers legacy saved metadata without leaking another album', async () => {
   const legacy = { id: 'legacy-song', title: 'Old saved', ver: 'v1' };
