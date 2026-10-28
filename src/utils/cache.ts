@@ -2,6 +2,7 @@ import type { Album, LibrarySnapshot, Track } from '../types';
 import { clearLocalSession } from './session';
 
 const AUDIO_PREFIX = 'audio-private-v3:';
+const ARTWORK_PREFIX = 'artwork-private-v1:';
 const META_CACHE = 'drive-private-state-v3';
 const activeDownloads = new Set<AbortController>();
 let generation = 0;
@@ -10,6 +11,13 @@ export type DownloadProgress = { loaded: number; total?: number };
 
 export function buildStreamUrl(track: Track): string {
   return `/api/stream/${encodeURIComponent(track.id)}?v=${encodeURIComponent(track.ver ?? '')}`;
+}
+
+export function buildArtworkUrl(track: Track): string | null {
+  const cover = track.cover;
+  if (track.coverIssue === 'ambiguous' || !cover || typeof cover.id !== 'string' || !cover.id ||
+      typeof cover.ver !== 'string' || !cover.ver || !['webp', 'jpg', 'png'].includes(cover.format)) return null;
+  return `/api/artwork/${encodeURIComponent(track.id)}?v=${encodeURIComponent(cover.ver)}`;
 }
 function cacheName(scope: string) { return `${AUDIO_PREFIX}${encodeURIComponent(scope)}`; }
 function stateUrl(kind: string, scope: string, albumId?: string) {
@@ -199,6 +207,44 @@ export async function downloadTrack(track: Track, scope: string, options: { sign
   }
 }
 
+/** Explicit image persistence is confirmed by the private worker, never inferred from viewing. */
+export async function cacheArtwork(track: Track, scope: string, options: { signal?: AbortSignal } = {}): Promise<void> {
+  const url = buildArtworkUrl(track);
+  if (!url) return;
+  const expected = generation;
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  options.signal?.addEventListener('abort', abort, { once: true });
+  if (options.signal?.aborted) controller.abort();
+  activeDownloads.add(controller);
+  let serverRevoked = false;
+  try {
+    if (controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+    const sync = await workerRequest({ type: 'SYNC_SESSION' }, 30_000, controller.signal);
+    if ((sync.session as { cacheScope?: string } | null)?.cacheScope !== scope || expected !== generation) throw new Error('ログイン状態が変わったため、画像を保存できませんでした。');
+    const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+      headers: { 'X-Drive-Artwork-Save': '1', 'X-Drive-Cache-Scope': scope } });
+    try {
+      if (controller.signal.aborted || expected !== generation) throw new DOMException('Aborted', 'AbortError');
+      if (response.status === 401) { serverRevoked = true; await clearPrivateAudioCache(); throw new Error('ログインの有効期限が切れました。'); }
+      if ([404, 409].includes(response.status)) throw new Error('曲の画像が変更されています。曲一覧を更新してから再試行してください。');
+      if (response.status !== 200) throw new Error('曲の画像を保存できませんでした。通信状態を確認して再試行してください。');
+      const outcome = response.headers.get('X-Drive-Artwork-Cache');
+      if (outcome === 'quota') throw new Error('画像を保存する空き容量が不足しています。不要な保存曲を削除してください。');
+      if (outcome === 'cancelled') throw new DOMException('Aborted', 'AbortError');
+      if (outcome !== 'stored') throw new Error('画像を端末に保存できませんでした。ブラウザの保存領域を確認し、ページを再読み込みしてから再試行してください。');
+    } finally { await response.body?.cancel().catch(() => {}); }
+  } catch (error) {
+    if (serverRevoked) throw new Error('ログインの有効期限が切れました。');
+    if (controller.signal.aborted || expected !== generation || error instanceof DOMException && error.name === 'AbortError') throw new DOMException('Aborted', 'AbortError');
+    if (error instanceof TypeError) throw new Error('曲の画像を取得できませんでした。通信状態を確認してください。');
+    throw error;
+  } finally {
+    activeDownloads.delete(controller);
+    options.signal?.removeEventListener('abort', abort);
+  }
+}
+
 export async function cleanupCache(validAbsUrls: string[], scope: string): Promise<void> {
   const valid = new Set(validAbsUrls.map(url => new URL(url, location.origin).href));
   for (const track of await listSavedTracks(scope)) {
@@ -220,7 +266,7 @@ export async function clearPrivateAudioCache(scope?: string): Promise<void> {
   } catch { /* Direct deletion below is also needed when an older worker is installed. */ }
   if ('caches' in window) {
     for (const key of await caches.keys()) {
-      if (key === 'audio-v1' || key.startsWith('audio-private-v2:') || key.startsWith(AUDIO_PREFIX) || (!acknowledged && key === META_CACHE)) await caches.delete(key);
+      if (key === 'audio-v1' || key.startsWith('audio-private-v2:') || key.startsWith(AUDIO_PREFIX) || key.startsWith(ARTWORK_PREFIX) || (!acknowledged && key === META_CACHE)) await caches.delete(key);
     }
   }
   try {

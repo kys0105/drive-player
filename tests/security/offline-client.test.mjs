@@ -344,3 +344,74 @@ test('catalog presence distinguishes explicit empty, missing, and legacy fallbac
   assert.equal((await api.loadCatalog(scope, 'album_B')).length, 0);
   assert.equal(await api.hasCatalog(scope, 'unfetched_album'), false);
 });
+
+test('artwork URL uses only the cover version, with no URL for absent or ambiguous associations', async () => {
+  const { api, state } = await browserModule('src/utils/cache.ts');
+  const covered = { ...track, cover: { id: 'image_file', ver: 'cover-v1', format: 'webp' } };
+  assert.equal(api.buildArtworkUrl(covered), '/api/artwork/audio_file_1234567890?v=cover-v1');
+  assert.equal(api.buildArtworkUrl({ ...covered, ver: 'new-audio-version' }), api.buildArtworkUrl(covered));
+  assert.equal(api.buildArtworkUrl(track), null);
+  assert.equal(api.buildArtworkUrl({ ...covered, coverIssue: 'ambiguous' }), null);
+  await api.cacheArtwork(track, scope);
+  assert.equal(state.fetches, 0);
+});
+
+test('explicit artwork caching requires the worker commit acknowledgement and leaves audio alone', async () => {
+  const { api, state } = await browserModule('src/utils/cache.ts');
+  const covered = { ...track, cover: { id: 'image_file', ver: 'cover-v1', format: 'png' } };
+  state.fetch = async (input, options) => {
+    assert.equal(input, '/api/artwork/audio_file_1234567890?v=cover-v1');
+    assert.equal(options.credentials, 'same-origin'); assert.equal(options.cache, 'no-store');
+    assert.equal(options.headers['X-Drive-Artwork-Save'], '1'); assert.equal(options.headers['X-Drive-Cache-Scope'], scope);
+    return new Response('image', { headers: { 'Content-Type': 'image/png', 'X-Drive-Artwork-Cache': 'stored' } });
+  };
+  await api.cacheArtwork(covered, scope);
+  assert.equal(state.fetches, 1);
+  assert.equal(state.workerMessages.some(message => message.type === 'STORE_TRACK'), false);
+  assert.equal(state.stored, false);
+});
+
+test('artwork cache failures and version changes are Japanese errors, never successful saves', async () => {
+  const covered = { ...track, cover: { id: 'image_file', ver: 'cover-v1', format: 'jpg' } };
+  for (const [status, outcome, expected] of [[200, 'quota', /空き容量/], [200, 'unavailable', /保存領域/], [200, null, /再読み込み/], [409, null, /画像が変更/], [404, null, /画像が変更/]]) {
+    const { api, state } = await browserModule('src/utils/cache.ts');
+    state.fetch = async () => new Response('image', { status, headers: outcome ? { 'X-Drive-Artwork-Cache': outcome } : {} });
+    await assert.rejects(api.cacheArtwork(covered, scope), expected);
+    assert.equal(state.stored, false);
+  }
+});
+
+test('artwork 401 revokes private state and surfaces the authentication error', async () => {
+  const { api, state, store } = await browserModule('src/utils/cache.ts');
+  store.set('drive-player.offline-session.v3', 'previous allowance');
+  state.stored = true;
+  state.fetch = async () => new Response(null, { status: 401 });
+  await assert.rejects(api.cacheArtwork({ ...track, cover: { id: 'image_file', ver: 'cover-v1', format: 'png' } }, scope), /ログインの有効期限/);
+  assert.equal(state.stored, false);
+  assert.equal(store.has('drive-player.offline-session.v3'), false);
+  assert.ok(state.workerMessages.some(message => message.type === 'CLEAR_PRIVATE_AUDIO'));
+});
+
+test('explicit artwork caching can be cancelled while its worker validation is pending', async () => {
+  const silentWorker = { postMessage() {} };
+  const { api, state } = await browserModule('src/utils/cache.ts', { navigator: { serviceWorker: { controller: silentWorker, ready: Promise.resolve({ active: silentWorker }) } } });
+  const controller = new AbortController();
+  const saving = api.cacheArtwork({ ...track, cover: { id: 'image_file', ver: 'cover-v1', format: 'png' } }, scope, { signal: controller.signal });
+  controller.abort();
+  await assert.rejects(saving, error => error.name === 'AbortError');
+  assert.equal(state.fetches, 0);
+});
+
+test('logout aborts an in-flight explicit artwork request even without a caller signal', async () => {
+  const { api, state } = await browserModule('src/utils/cache.ts');
+  let started;
+  const ready = new Promise(resolve => { started = resolve; });
+  state.fetch = (_input, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    started();
+  });
+  const saving = api.cacheArtwork({ ...track, cover: { id: 'image_file', ver: 'cover-v1', format: 'png' } }, scope);
+  const rejected = assert.rejects(saving, error => error.name === 'AbortError');
+  await ready; await api.clearPrivateAudioCache(); await rejected;
+  assert.equal(state.stored, false);
+});

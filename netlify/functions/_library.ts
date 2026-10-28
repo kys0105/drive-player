@@ -1,14 +1,15 @@
 import type { drive_v3 } from 'googleapis';
-import type { Album, LyricsAsset, Track } from '../../src/types.js';
+import type { Album, ArtworkAsset, LyricsAsset, Track } from '../../src/types.js';
 import { getDrive, getFolderId } from './_drive.js';
 import { privateResponse } from './_http.js';
 
 export const FOLDER_MIME = 'application/vnd.google-apps.folder';
-const FIELDS = 'id,name,mimeType,parents,trashed,size,md5Checksum,modifiedTime,thumbnailLink';
+const FIELDS = 'id,name,mimeType,parents,trashed,size,md5Checksum,modifiedTime';
 const natural = new Intl.Collator('ja', { numeric: true, sensitivity: 'variant' });
 export type DriveFile = drive_v3.Schema$File;
 export type AuthorizedAudio = { file: DriveFile; album: Album };
 export type Association = { asset?: LyricsAsset; file?: DriveFile; issue?: 'ambiguous' };
+export type ArtworkAssociation = { asset?: ArtworkAsset; file?: DriveFile; issue?: 'ambiguous' };
 
 export class LibraryError extends Error {
   readonly status: number;
@@ -26,6 +27,14 @@ function format(file: DriveFile): 'lrc' | 'txt' | undefined {
   if (!type || !['text/plain', 'text/x-lrc', 'text/lrc', 'application/x-lrc', 'application/lrc', 'application/octet-stream'].includes(type)) return;
   const extension = /\.(lrc|txt)$/i.exec(file.name ?? '')?.[1].toLowerCase();
   return extension === 'lrc' || extension === 'txt' ? extension : undefined;
+}
+function artworkFormat(file: DriveFile): ArtworkAsset['format'] | undefined {
+  const extension = /\.(webp|jpe?g|png)$/i.exec(file.name ?? '')?.[1].toLowerCase();
+  const format = extension === 'jpeg' ? 'jpg' : extension;
+  if (format !== 'webp' && format !== 'jpg' && format !== 'png') return;
+  const mime = file.mimeType?.split(';')[0].trim().toLowerCase();
+  const expected = format === 'jpg' ? 'image/jpeg' : `image/${format}`;
+  return mime === expected || mime === 'application/octet-stream' ? format : undefined;
 }
 function isChild(file: DriveFile, parent: string): boolean {
   return Boolean(file.id && validId(file.id) && file.trashed === false && file.parents?.length === 1 && file.parents[0] === parent);
@@ -147,14 +156,30 @@ export class DriveLibrary {
     const file = preferred[0];
     return file ? { asset: { id: file.id!, ver: version(file), format: format(file)! }, file } : {};
   }
+  artworkAssociation(audio: DriveFile, siblings: DriveFile[]): ArtworkAssociation {
+    if (!audio.name) return {};
+    if (!siblings.some(file => file.id === audio.id && file.name === audio.name && file.mimeType === 'audio/mpeg')) return { issue: 'ambiguous' };
+    const name = baseName(audio.name);
+    if (siblings.filter(file => file.mimeType === 'audio/mpeg' && file.name && baseName(file.name) === name).length !== 1) return { issue: 'ambiguous' };
+    const candidates = siblings.filter(file => file.name && baseName(file.name) === name && artworkFormat(file));
+    for (const format of ['webp', 'jpg', 'png'] as const) {
+      const preferred = candidates.filter(file => artworkFormat(file) === format);
+      if (preferred.length > 1) return { issue: 'ambiguous' };
+      const file = preferred[0];
+      if (file) return { asset: { id: file.id!, ver: version(file), format }, file };
+    }
+    return {};
+  }
   async tracks(album: Album): Promise<Track[]> {
     const files = await this.children(album.id);
     return files.filter(file => file.mimeType === 'audio/mpeg').map(file => {
       const lyrics = this.association(file, files);
+      const cover = this.artworkAssociation(file, files);
       return { id: file.id!, title: title(file.name ?? 'audio'), fileName: file.name ?? 'audio', albumId: album.id,
-        mimeType: 'audio/mpeg', artwork: file.thumbnailLink ?? undefined, artist: '',
+        mimeType: 'audio/mpeg', artist: '',
         size: file.size ? Number(file.size) : undefined, modifiedTime: file.modifiedTime ?? undefined, ver: version(file),
-        ...(lyrics.asset ? { lyrics: lyrics.asset } : {}), ...(lyrics.issue ? { lyricsIssue: lyrics.issue } : {}) };
+        ...(lyrics.asset ? { lyrics: lyrics.asset } : {}), ...(lyrics.issue ? { lyricsIssue: lyrics.issue } : {}),
+        ...(cover.asset ? { cover: cover.asset } : {}), ...(cover.issue ? { coverIssue: cover.issue } : {}) };
     });
   }
   async accessToken(): Promise<string> {

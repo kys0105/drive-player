@@ -29,7 +29,7 @@ before(async () => {
   process.env.SESSION_SECRET = 'vercel-adapter-test-secret-at-least-32-bytes';
   process.env.FOLDER_ID = folderId;
   process.env.GOOGLE_SERVICE_ACCOUNT_BASE64 = JSON.stringify({ client_email: 'test@example.invalid', private_key: 'fixture-only' });
-  for (const name of ['login', 'session', 'logout', 'list', 'stream']) {
+  for (const name of ['login', 'session', 'logout', 'list', 'stream', 'artwork']) {
     handlers[name] = await loadFunction(name, { directory: 'api', webExport: true });
   }
   const response = await handlers.login(request('/api/login', {
@@ -66,8 +66,8 @@ after(() => {
 });
 
 test('Vercel adapters preserve authentication, CSRF, methods and private CDN headers', async () => {
-  for (const name of ['session', 'list', 'stream']) {
-    const path = name === 'stream' ? `/api/stream/${fileId}` : `/api/${name}`;
+  for (const name of ['session', 'list', 'stream', 'artwork']) {
+    const path = ['stream', 'artwork'].includes(name) ? `/api/${name}/${fileId}?v=v1` : `/api/${name}`;
     const denied = await handlers[name](request(path));
     assert.equal(denied.status, 401);
     assertPrivate(assert, denied);
@@ -148,4 +148,7 @@ test('Vercel config routes old URLs to the same protected APIs and sets bounded 
   }
   assert.ok(config.rewrites.some((rule) => rule.source === '/api/stream/:fileId'));
   assert.ok(config.rewrites.some((rule) => rule.source === '/.netlify/functions/stream/:fileId'));
+  for (const prefix of ['/api', '/.netlify/functions']) {
+    assert.ok(config.rewrites.some(rule => rule.source === `${prefix}/artwork/:audioId` && rule.destination === '/api/artwork?audioId=:audioId'));
+  }
 });

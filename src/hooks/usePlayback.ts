@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Track } from '../types';
-import { buildStreamUrl } from '../utils/cache';
+import { buildArtworkUrl, buildStreamUrl } from '../utils/cache';
 import { getSession } from '../utils/session';
 
 export type RepeatMode = 'none' | 'all' | 'one';
@@ -210,6 +210,8 @@ export function usePlayback(options: Options) {
     if (!('mediaSession' in navigator) || !activeTrack) return;
     if (typeof MediaMetadata !== 'undefined') navigator.mediaSession.metadata = new MediaMetadata({
       title: activeTrack.title, artist: activeTrack.artist || 'SetagayaGenico',
+      ...(buildArtworkUrl(activeTrack) ? { artwork: [{ src: new URL(buildArtworkUrl(activeTrack)!, location.origin).href,
+        type: activeTrack.cover?.format === 'jpg' ? 'image/jpeg' : `image/${activeTrack.cover?.format}` }] } : {}),
     });
     const actions: Partial<Record<MediaSessionAction, MediaSessionActionHandler>> = {
       play: () => void playElement(), pause, nexttrack: () => next(), previoustrack: previous,

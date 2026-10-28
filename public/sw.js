@@ -1,5 +1,7 @@
-/* Explicit downloads only. A 30-day allowance starts at an online Cookie check. */
+/* Explicit audio downloads and scoped artwork. A 30-day allowance starts online. */
 const AUDIO_PREFIX = 'audio-private-v3:';
+const ARTWORK_PREFIX = 'artwork-private-v1:';
+const MAX_ARTWORK_BYTES = 4 * 1024 * 1024;
 const META_CACHE = 'drive-private-state-v3';
 const SHELL_CACHE = 'drive-shell-v3';
 const LEASE_URL = new URL('/__private__/lease', self.location.origin).href;
@@ -9,6 +11,9 @@ let writes = Promise.resolve();
 let sessionCheck;
 let lastOnlineScope;
 const revokedScopes = new Set();
+const pendingArtwork = new Map();
+const artworkControllers = new Set();
+const artworkEpochs = new Map();
 
 function mutate(operation) {
   const pending = writes.then(operation);
@@ -17,6 +22,7 @@ function mutate(operation) {
 }
 function failure(status) { return new Response(null, { status, headers: { 'Cache-Control': 'private, no-store' } }); }
 function audioCache(scope) { return `${AUDIO_PREFIX}${encodeURIComponent(scope)}`; }
+function artworkCache(scope) { return `${ARTWORK_PREFIX}${encodeURIComponent(scope)}`; }
 function stateUrl(kind, scope, albumId) {
   const album = albumId === undefined ? '' : `/${encodeURIComponent(albumId)}`;
   return new URL(`/__private__/${kind}${album}/${encodeURIComponent(scope)}`, self.location.origin).href;
@@ -52,13 +58,16 @@ async function lease() {
 }
 async function clearPrivate(scope) {
   generation++;
+  artworkEpochs.clear();
+  for (const controller of artworkControllers) controller.abort();
   if (validScope(scope ?? lastOnlineScope)) revokedScopes.add(scope ?? lastOnlineScope);
   const clearing = mutate(async () => {
     const priorLease = await readJson(LEASE_URL);
     if (!scope && validScope(priorLease?.cacheScope)) revokedScopes.add(priorLease.cacheScope);
     const keys = await caches.keys();
     await Promise.all(keys.filter(name => name === 'audio-v1' || name.startsWith('audio-private-v2:') ||
-      (name.startsWith(AUDIO_PREFIX) && (!scope || name === audioCache(scope)))) .map(name => caches.delete(name)));
+      (name.startsWith(AUDIO_PREFIX) && (!scope || name === audioCache(scope))) ||
+      (name.startsWith(ARTWORK_PREFIX) && (!scope || name === artworkCache(scope)))) .map(name => caches.delete(name)));
     const meta = await caches.open(META_CACHE);
     for (const request of await meta.keys()) {
       const path = new URL(request.url).pathname;
@@ -91,6 +100,7 @@ async function recordSession(value, expected) {
     if (previous?.blocked && previous.cacheScope === value.cacheScope) return;
     if (previous && previous.cacheScope !== value.cacheScope) {
       await caches.delete(audioCache(previous.cacheScope));
+      await caches.delete(artworkCache(previous.cacheScope));
       const meta = await caches.open(META_CACHE);
       for (const request of await meta.keys()) {
         if (new URL(request.url).pathname.endsWith(`/${encodeURIComponent(previous.cacheScope)}`)) await meta.delete(request);
@@ -218,13 +228,184 @@ async function storeTrack(data) {
   });
 }
 async function deleteTrack(data) {
+  const canonical = audioUrl(data.url);
+  if (!canonical || !validScope(data.cacheScope)) return;
+  const path = new URL(canonical).pathname.replace('/api/stream/', '/api/artwork/');
+  const imageKey = `${data.cacheScope}\0${path}`;
+  artworkEpochs.set(imageKey, (artworkEpochs.get(imageKey) ?? 0) + 1);
   await mutate(async () => {
-    const canonical = audioUrl(data.url);
-    if (!canonical || !validScope(data.cacheScope)) return;
     const cache = await caches.open(audioCache(data.cacheScope));
     await cache.delete(canonical);
     await putJson(stateUrl('saved', data.cacheScope), (await savedTracks(data.cacheScope)).filter(track => track.savedUrl !== canonical));
+    if ((await caches.keys()).includes(artworkCache(data.cacheScope))) {
+      const images = await caches.open(artworkCache(data.cacheScope));
+      for (const request of await images.keys()) if (new URL(request.url).pathname === path) await images.delete(request);
+    }
   });
+}
+
+function artworkUrl(value) {
+  try {
+    const url = new URL(value, self.location.origin);
+    const version = url.searchParams.get('v');
+    if (url.origin !== self.location.origin || !/^\/api\/artwork\/[A-Za-z0-9_-]{1,256}$/.test(url.pathname) || !version || version.length > 2048) return null;
+    url.hash = ''; url.search = ''; url.searchParams.set('v', version);
+    return url.href;
+  } catch { return null; }
+}
+
+function artworkMime(response) {
+  const type = (response.headers.get('Content-Type') ?? '').split(';')[0].trim().toLowerCase();
+  return ['image/webp', 'image/jpeg', 'image/png'].includes(type) ? type : null;
+}
+
+function imageHeaders(response) {
+  const headers = new Headers(response.headers);
+  headers.set('Cache-Control', 'private, no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  return headers;
+}
+
+function imageMagic(bytes, mime) {
+  if (mime === 'image/png') return [137, 80, 78, 71, 13, 10, 26, 10].every((byte, index) => bytes[index] === byte);
+  if (mime === 'image/jpeg') return bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
+  return bytes.length >= 12 && [82, 73, 70, 70].every((byte, index) => bytes[index] === byte) && [87, 69, 66, 80].every((byte, index) => bytes[index + 8] === byte);
+}
+
+async function readArtwork(response, signal, expected) {
+  const mime = artworkMime(response);
+  const advertised = Number(response.headers.get('Content-Length'));
+  if (!mime || advertised > MAX_ARTWORK_BYTES || !response.body) throw new Error('Invalid artwork');
+  const reader = response.body.getReader();
+  const chunks = []; let length = 0;
+  try {
+    while (true) {
+      const part = await reader.read();
+      if (signal.aborted || generation !== expected) throw new DOMException('Aborted', 'AbortError');
+      if (part.done) break;
+      length += part.value.byteLength;
+      if (length > MAX_ARTWORK_BYTES) throw new Error('Invalid artwork');
+      chunks.push(part.value);
+    }
+    if (!length || (advertised > 0 && advertised !== length)) throw new Error('Invalid artwork');
+    const blob = new Blob(chunks, { type: mime });
+    if (!imageMagic(new Uint8Array(await blob.slice(0, 12).arrayBuffer()), mime)) throw new Error('Invalid artwork');
+    const headers = imageHeaders(response);
+    headers.set('Content-Type', mime); headers.set('Content-Length', String(length));
+    return { blob, headers };
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+}
+
+async function trimArtwork(cache, path) {
+  const versions = [];
+  for (const request of await cache.keys()) {
+    if (new URL(request.url).pathname !== path) continue;
+    const response = await cache.match(request);
+    versions.push({ request, time: Number(response?.headers.get('X-Drive-Artwork-Requested-At')) || 0 });
+  }
+  versions.sort((a, b) => b.time - a.time);
+  for (const entry of versions.slice(2)) await cache.delete(entry.request);
+}
+
+function artworkFailure(error) {
+  if (error?.name === 'QuotaExceededError') return 'quota';
+  if (error?.name === 'AbortError') return 'cancelled';
+  return 'unavailable';
+}
+
+function networkArtwork(request, canonical, current, expected) {
+  const scope = current?.cacheScope ?? '';
+  const imageKey = `${scope}\0${new URL(request.url).pathname}`;
+  const imageEpoch = artworkEpochs.get(imageKey) ?? 0;
+  const key = `${expected}\0${imageEpoch}\0${scope}\0${canonical ?? request.url}`;
+  if (pendingArtwork.has(key)) return pendingArtwork.get(key);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  // Auto-view requests share one network read. Explicit save requests also honor
+  // cancellation; logout always aborts every outstanding private image request.
+  const explicit = request.headers.get('X-Drive-Artwork-Save') === '1';
+  if (explicit) request.signal.addEventListener('abort', abort, { once: true });
+  if (explicit && request.signal.aborted) controller.abort();
+  artworkControllers.add(controller);
+  const requestedAt = Date.now();
+  const pending = (async () => {
+    try {
+      const headers = new Headers(request.headers);
+      headers.delete('X-Drive-Artwork-Save'); headers.delete('X-Drive-Cache-Scope');
+      const response = await fetch(new Request(request, { headers, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal }));
+      if (expected !== generation || controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+      if (response.status === 401) { await clearPrivate(); return { response, finished: Promise.resolve('cancelled') }; }
+      if (response.status !== 200) return { response, finished: Promise.resolve('unavailable') };
+      const image = await readArtwork(response, controller.signal, expected);
+      const displayed = new Response(image.blob, { status: 200, headers: image.headers });
+      const finished = current && canonical ? mutate(async () => {
+        const permit = await readJson(LEASE_URL);
+        if (expected !== generation || imageEpoch !== (artworkEpochs.get(imageKey) ?? 0) || controller.signal.aborted || permit?.blocked || permit?.cacheScope !== scope || !Number.isFinite(permit.offlineUntil) || Date.now() >= permit.offlineUntil) throw new DOMException('Aborted', 'AbortError');
+        const cache = await caches.open(artworkCache(scope));
+        const savedHeaders = new Headers(image.headers);
+        savedHeaders.set('X-Drive-Artwork-Cache', 'stored');
+        savedHeaders.set('X-Drive-Artwork-Requested-At', String(requestedAt));
+        await cache.put(canonical, new Response(image.blob, { status: 200, headers: savedHeaders }));
+        await trimArtwork(cache, new URL(canonical).pathname);
+        if (expected !== generation || controller.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        if (!(await cache.match(canonical))) throw new Error('A newer artwork version is already stored');
+        return 'stored';
+      }).catch(artworkFailure) : Promise.resolve('unavailable');
+      return { response: displayed, finished };
+    } catch (error) {
+      return { response: failure(error?.name === 'AbortError' ? 409 : error?.message === 'Invalid artwork' ? 502 : 503), finished: Promise.resolve(artworkFailure(error)) };
+    }
+  })();
+  pendingArtwork.set(key, pending);
+  void pending.then(result => result.finished).catch(() => {}).finally(() => {
+    if (pendingArtwork.get(key) === pending) pendingArtwork.delete(key);
+    artworkControllers.delete(controller);
+    request.signal.removeEventListener('abort', abort);
+  });
+  return pending;
+}
+
+async function serveArtwork(request) {
+  const expected = generation;
+  let current;
+  try { current = await lease(); } catch { /* Online display remains possible. */ }
+  const blocked = async () => {
+    const state = await readJson(LEASE_URL);
+    return revokedScopes.has(lastOnlineScope) || Boolean(state?.blocked && (!lastOnlineScope || state.cacheScope === lastOnlineScope));
+  };
+  if (await blocked()) return { response: failure(401) };
+  if (!current) { try { current = await checkSession(); } catch { /* Origin still authenticates online images. */ } }
+  if (expected !== generation || await blocked()) return { response: failure(409) };
+  const explicit = request.headers.get('X-Drive-Artwork-Save') === '1';
+  if (explicit && current && request.headers.get('X-Drive-Cache-Scope') !== current.cacheScope) return { response: failure(409) };
+  const canonical = artworkUrl(request.url);
+  if (current && canonical) {
+    try {
+      const cache = await caches.open(artworkCache(current.cacheScope));
+      const cached = await cache.match(canonical);
+      if (cached?.status === 200 && cached.headers.get('X-Drive-Artwork-Cache') === 'stored' && artworkMime(cached) && Number(cached.headers.get('Content-Length')) <= MAX_ARTWORK_BYTES) {
+        return { response: expected !== generation ? failure(409) : request.method === 'HEAD' ? new Response(null, { status: 200, headers: imageHeaders(cached) }) : cached };
+      }
+    } catch { /* Storage denial must not break online image display. */ }
+  }
+  if (request.method === 'HEAD') {
+    try {
+      const response = await fetch(new Request(request, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' }));
+      if (response.status === 401) await clearPrivate();
+      if (response.status === 200 && (!artworkMime(response) || Number(response.headers.get('Content-Length')) > MAX_ARTWORK_BYTES)) return { response: failure(502) };
+      return { response: expected !== generation && response.status !== 401 ? failure(409) : new Response(null, { status: response.status, headers: imageHeaders(response) }) };
+    } catch { return { response: failure(503) }; }
+  }
+  const result = await networkArtwork(request, canonical, current, expected);
+  if (expected !== generation) return { response: failure(409), finished: result.finished };
+  if (explicit && result.response.status === 200) {
+    const outcome = await result.finished;
+    if (expected !== generation) return { response: failure(409), finished: result.finished };
+    const headers = imageHeaders(result.response);
+    headers.set('X-Drive-Artwork-Cache', outcome);
+    return { response: new Response(result.response.clone().body, { status: 200, headers }), finished: result.finished };
+  }
+  return { response: result.response.clone(), finished: result.finished };
 }
 async function shellUrls(urls = []) {
   let cache;
@@ -352,6 +533,11 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
   if (/^\/api\/stream\//.test(url.pathname) && ['GET', 'HEAD'].includes(request.method)) event.respondWith(serveAudio(request));
+  else if (/^\/api\/artwork\//.test(url.pathname) && ['GET', 'HEAD'].includes(request.method)) {
+    const result = serveArtwork(request);
+    event.respondWith(result.then(value => value.response));
+    event.waitUntil(result.then(value => value.finished));
+  }
   else if ((url.pathname === '/api/session' && request.method === 'GET') || (url.pathname === '/api/login' && request.method === 'POST')) event.respondWith(authResponse(request));
   else if (request.mode === 'navigate') event.respondWith(navigation(request));
   else if (request.method === 'GET' && /\.(?:js|css|woff2?|svg|png|jpe?g|webp|webmanifest)$/.test(url.pathname) && !/^\/api\//.test(url.pathname) && !/\/@(?:vite|react-refresh)|\/src\//.test(url.pathname)) {
