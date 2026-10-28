@@ -1,14 +1,10 @@
 import type { Track } from '../types';
+import { buildArtworkUrl } from '../utils/cache';
 
 export const preferredTitles = ['ghost', 'noah', 'ほしを継ぐもの', 'flowers3', 'milkomeda', '4 Lib Isl', '螺旋とは', 'Impulse'];
-const covers: Array<[RegExp, string]> = [
-  [/^(4|for)\s*lib\s*isl/i, 'lib-island'], [/^anchor/i, 'anchor'], [/^flowers3/i, 'flowers3'],
-  [/^ghost/i, 'ghost'], [/^milkomeda/i, 'milkomeda'], [/^noah/i, 'noah'],
-  [/^ほしを継ぐもの/, 'hoshi'], [/^砂/, 'suna'], [/^紐/, 'himo'], [/^螺旋とは/, 'rasen'],
-];
+export const fallbackArtwork = '/icons/track-placeholder.svg';
 export function artwork(track?: Track) {
-  const cover = covers.find(([pattern]) => pattern.test(track?.title ?? ''))?.[1] ?? 'noah';
-  return `/art/${cover}.webp`;
+  return track ? buildArtworkUrl(track) ?? fallbackArtwork : fallbackArtwork;
 }
 export function formatTime(seconds: number) {
   const safe = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds)) : 0;

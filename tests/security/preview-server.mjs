@@ -56,7 +56,18 @@ const lyricFiles = [...lyricBodies].map(([id, body], index) => ({
   size: String(body.length), md5Checksum: createHash('md5').update(body).digest('hex'),
   parents: [albumId], trashed: false, modifiedTime: '2026-10-28T00:00:00Z',
 }));
-const entries = [...folders, ...files, ...lyricFiles];
+// Original 20px test images. Production covers and private image URLs are absent.
+const artworkBodies = new Map([
+  ['browser_fixture_artwork_1111111111', Buffer.from('UklGRkYAAABXRUJQVlA4IDoAAAAwAwCdASoUABQAPm0ylUekIqIhKAgAgA2JZQB2AACBxLwAAP7yIl//hyp9O3sf/+A3XxaxOeM8gAAA', 'base64')],
+  ['browser_fixture_artwork_2222222222', Buffer.from('iVBORw0KGgoAAAANSUhEUgAAABQAAAAUCAIAAAAC64paAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAIElEQVQ4jWMQ9y8nGzGMai4fDbDy0URSPpoxygeuMAAAb45ZYEzLKXIAAAAASUVORK5CYII=', 'base64')],
+]);
+const artworkFiles = [...artworkBodies].map(([id, body], index) => ({
+  id, name: files[index].name.replace(/\.mp3$/i, index ? '.png' : '.webp'),
+  mimeType: index ? 'image/png' : 'image/webp', size: String(body.length),
+  md5Checksum: createHash('md5').update(body).digest('hex'), parents: [albumId],
+  trashed: false, modifiedTime: '2026-10-28T00:00:00Z',
+}));
+const entries = [...folders, ...files, ...lyricFiles, ...artworkFiles];
 
 setDriveMock(() => ({
   files: {
@@ -89,9 +100,9 @@ globalThis.fetch = async (input, init) => {
   }
   const fileId = url.pathname.split('/').pop();
   const file = entries.find(entry => entry.id === fileId);
-  if (!file || !['audio/mpeg', 'text/plain'].includes(file.mimeType) || url.searchParams.get('alt') !== 'media') return new Response(null, { status: 404 });
+  if (!file || !['audio/mpeg', 'text/plain', 'image/png', 'image/webp'].includes(file.mimeType) || url.searchParams.get('alt') !== 'media') return new Response(null, { status: 404 });
   if (new Headers(init?.headers).get('Authorization') !== 'Bearer browser-fixture-token') return new Response(null, { status: 403 });
-  const payload = file.mimeType === 'text/plain' ? lyricBodies.get(fileId) : audioFixture;
+  const payload = file.mimeType === 'audio/mpeg' ? audioFixture : lyricBodies.get(fileId) ?? artworkBodies.get(fileId);
   if (!payload) return new Response(null, { status: 404 });
   const headers = new Headers({ 'Content-Type': file.mimeType, 'Accept-Ranges': 'bytes' });
   const range = new Headers(init?.headers).get('Range');
@@ -120,7 +131,7 @@ globalThis.fetch = async (input, init) => {
   });
 };
 
-const names = ['login', 'session', 'logout', 'list', 'stream', 'albums', 'lyrics'];
+const names = ['login', 'session', 'logout', 'list', 'stream', 'albums', 'lyrics', 'artwork'];
 export const handlers = Object.fromEntries(
   await Promise.all(names.map(async (name) => [name, await loadFunction(name, { directory: 'api', webExport: true })]))
 );
@@ -132,6 +143,8 @@ const types = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.webp': 'image/webp',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
   '.ico': 'image/x-icon',
   '.webmanifest': 'application/manifest+json',
 };
@@ -139,7 +152,7 @@ const types = {
 const server = createServer(async (incoming, outgoing) => {
   try {
     const url = new URL(incoming.url ?? '/', origin);
-    const functionName = /^\/(?:api|\.netlify\/functions)\/(login|session|logout|list|stream|albums|lyrics)(?:\/|$)/.exec(url.pathname)?.[1];
+    const functionName = /^\/(?:api|\.netlify\/functions)\/(login|session|logout|list|stream|albums|lyrics|artwork)(?:\/|$)/.exec(url.pathname)?.[1];
     let response;
     if (functionName) {
       const abort = new AbortController();
