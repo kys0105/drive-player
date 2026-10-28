@@ -3,6 +3,9 @@
   "framework": "vite",
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
+  "git": {
+    "deploymentEnabled": { "main": true }
+  },
   "regions": ["hnd1"],
   "functions": {
     "api/*.ts": { "maxDuration": 300, "supportsCancellation": true }

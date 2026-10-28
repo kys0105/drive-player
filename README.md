@@ -55,7 +55,9 @@ Cookieの期限と圏外利用の期限は別です。ブラウザの保存領�
 
 プロジェクト: `yumosin-house-studio / drive-player`。本番設定はProductionのSecretとして管理します。Previewへ本番のDrive接続設定を複製しません。
 
-通常の本番更新はGitHubの`main`をVercelへ自動デプロイします。旧Netlifyの自動ビルドは停止し、転送だけを提供します。
+通常の本番更新はGitHubの`main`へのマージでVercelが自動デプロイします。「本番に反映してください」という依頼では、対象PRのチェック確認、`main`へのマージ、本番デプロイ・配信の確認、そのリリースの作業ブランチの削除まで実施します。通常の更新で手動デプロイを重ねません。詳しい手順とブランチ整理の条件は [AGENTS.md](AGENTS.md) を参照してください。
+
+旧Netlifyの自動ビルドは停止し、転送だけを提供します。
 
 APIは `/api/login`, `/api/session`, `/api/logout`, `/api/albums`, `/api/list?albumId=...`, `/api/stream/:id`, `/api/lyrics/:audioId`, `/api/artwork/:audioId?v=...`。旧Netlify APIのパスも認証を通る互換ルートにしています。音源は設定済みルート直下、またはその直下の通常フォルダ内のMP3だけを取得し、ストリームで配信します。歌詞と画像も同じ認証・所属確認の内側で配信し、APIは共有CDNへ保存しません。
 
