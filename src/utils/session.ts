@@ -65,6 +65,14 @@ export function loadOfflineSession(now = Date.now()): AuthSession | null {
   } catch { return null; }
 }
 
+export function mergeStoredSession(current: AuthSession | null, stored: AuthSession): AuthSession;
+export function mergeStoredSession(current: AuthSession | null, stored: AuthSession | null): AuthSession | null;
+/** A storage notification can renew cached data, not the receiving tab's online status. */
+export function mergeStoredSession(current: AuthSession | null, stored: AuthSession | null): AuthSession | null {
+  if (!stored) return null;
+  return { ...stored, offline: !(current?.cacheScope === stored.cacheScope && current.offline === false) };
+}
+
 export async function readSession(response: Response, signal?: AbortSignal, expectedGeneration = authGeneration): Promise<AuthSession> {
   const value: unknown = await response.json();
   if (signal?.aborted || expectedGeneration !== authGeneration) throw new DOMException('Aborted', 'AbortError');

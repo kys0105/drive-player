@@ -112,6 +112,42 @@ test('an in-flight session response cannot revive a locally logged-out browser',
   assert.equal(api.loadOfflineSession(), null);
 });
 
+test('same-scope storage renewal preserves the receiving tab online status without revalidation loops', async () => {
+  const { api, state, store } = await browserModule('src/utils/session.ts');
+  const current = await api.readSession(onlineSession());
+  const notificationsBefore = state.workerMessages.length;
+  state.now += 61_000;
+  const renewal = { ...current, verifiedAt: current.verifiedAt + 60_000, offlineUntil: current.offlineUntil + 60_000 };
+  store.set(api.OFFLINE_SESSION_KEY, JSON.stringify(renewal));
+  const cached = api.loadOfflineSession();
+  assert.equal(cached.offline, true);
+  let receivingTab = current;
+  for (let index = 0; index < 100; index++) receivingTab = api.mergeStoredSession(receivingTab, cached);
+  assert.equal(receivingTab.offline, false);
+  assert.equal(receivingTab.offlineUntil, renewal.offlineUntil);
+  assert.equal(receivingTab.verifiedAt, renewal.verifiedAt);
+  assert.equal(cached.offline, true);
+  assert.equal(state.fetches, 0);
+  assert.equal(state.workerMessages.length, notificationsBefore);
+});
+
+test('storage renewal cannot establish online status for a new scope or an offline receiving tab', async () => {
+  const { api } = await browserModule('src/utils/session.ts');
+  const current = await api.readSession(onlineSession());
+  const cached = { ...current, offline: true };
+  assert.equal(api.mergeStoredSession({ ...current, offline: true }, cached).offline, true);
+  assert.equal(api.mergeStoredSession(null, cached).offline, true);
+  assert.equal(api.mergeStoredSession(current, { ...cached, cacheScope: 'different-scope-1234567890' }).offline, true);
+});
+
+test('negative storage notifications continue to revoke a previously online session', async () => {
+  const { api, store } = await browserModule('src/utils/session.ts');
+  const current = await api.readSession(onlineSession());
+  store.delete(api.OFFLINE_SESSION_KEY);
+  assert.equal(api.loadOfflineSession(), null);
+  assert.equal(api.mergeStoredSession(current, null), null);
+});
+
 test('blocked localStorage keeps a verified online session usable in memory after the minute check', async () => {
   const blockedStorage = {
     getItem() { throw new DOMException('Denied', 'SecurityError'); },

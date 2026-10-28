@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import PlayerScreen from './components/PlayerScreen';
 import LoginPage from './pages/LoginPage';
 import { clearPrivateAudioCache } from './utils/cache';
-import { clearLocalSession, getSession, isLocallyLoggedOut, loadOfflineSession, OFFLINE_SESSION_KEY } from './utils/session';
+import { clearLocalSession, getSession, isLocallyLoggedOut, loadOfflineSession, mergeStoredSession, OFFLINE_SESSION_KEY } from './utils/session';
 import type { AuthSession } from './utils/session';
 import { clearStoredLyrics } from './lyrics';
 
@@ -88,7 +88,7 @@ export default function App() {
       if (event.key !== OFFLINE_SESSION_KEY) return;
       const cached = loadOfflineSession();
       if (!cached) handleRevocation();
-      else setAuth({ status: 'authenticated', session: cached });
+      else setAuth(previous => ({ status: 'authenticated', session: mergeStoredSession(previous.status === 'authenticated' ? previous.session : null, cached) }));
     };
     navigator.serviceWorker?.addEventListener('message', message);
     window.addEventListener('storage', storage);
