@@ -194,11 +194,14 @@ export function usePlayback(options: Options) {
       audioRef.current?.removeAttribute('src');
       audioRef.current?.load();
     }
-    if (!selected && options.tracks.length) chooseTrack(options.tracks[0].id, false);
+    if (!selected && options.tracks.length) {
+      const initial = options.tracks.find(item => !options.offline || options.savedIds.has(item.id));
+      if (initial) chooseTrack(initial.id, false);
+    }
     else if (selected && audioRef.current?.getAttribute('src') !== buildStreamUrl(selected)) {
       chooseTrack(selected.id, intent.current);
     }
-  }, [options.tracks, chooseTrack, pause]);
+  }, [options.tracks, options.offline, options.savedIds, chooseTrack, pause]);
 
   useEffect(() => {
     if (!('mediaSession' in navigator) || !activeTrack) return;

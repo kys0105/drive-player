@@ -11,3 +11,5 @@ CLAUDE_*.md
 node_modules
 dist
 .git
+netlify/redirect
+netlify/disabled-functions

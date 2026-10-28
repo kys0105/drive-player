@@ -1,0 +1,5 @@
+# A worker update must be a same-origin 200, never a cross-origin redirect.
+/sw.js  /retirement-worker.js  200!
+
+# Deliberately discard legacy paths. The new application starts at its own root.
+/*  https://drive-player-yumosin-house-studio.vercel.app/  302!
